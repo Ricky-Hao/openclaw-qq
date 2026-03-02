@@ -1,0 +1,7 @@
+{
+  "id": "openclaw-qq",
+  "name": "QQ Channel",
+  "version": "0.1.0",
+  "description": "QQ messaging channel for OpenClaw via OneBot v11 (NapCat). Registers as a native channel plugin with DM/group allowlists, auto-reconnect, and full OpenClaw channel pipeline integration.",
+  "main": "dist/index.js"
+}

@@ -1,0 +1,32 @@
+{
+  "id": "openclaw-qq",
+  "name": "QQ Channel",
+  "version": "0.1.0",
+  "description": "QQ messaging channel for OpenClaw via OneBot v11 (NapCat).",
+  "main": "dist/index.js",
+  "channels": ["qq"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "wsUrl": {
+        "type": "string",
+        "description": "OneBot v11 WebSocket URL",
+        "default": "ws://localhost:3001"
+      },
+      "token": {
+        "type": "string",
+        "description": "OneBot v11 WebSocket token"
+      },
+      "botQQ": {
+        "type": "string",
+        "description": "Bot QQ number"
+      },
+      "thinkingIndicator": {
+        "type": "boolean",
+        "description": "Send a '🤔 思考中...' placeholder message before agent processes",
+        "default": false
+      }
+    }
+  }
+}
