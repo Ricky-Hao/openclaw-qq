@@ -49,8 +49,8 @@ export class OneBotClient extends EventEmitter {
   static readonly INITIAL_DELAY_MS = 1000;
   static readonly MAX_DELAY_MS = 30_000;
   static readonly BACKOFF_FACTOR = 2;
-  static readonly HEARTBEAT_INTERVAL_MS = 30_000;
-  static readonly PONG_TIMEOUT_MS = 5_000;
+  static readonly HEARTBEAT_INTERVAL_MS = 20_000;
+  static readonly PONG_TIMEOUT_MS = 10_000;
   static readonly API_TIMEOUT_MS = 15_000;
   static readonly RECONNECT_WAIT_MS = 10_000;
 
@@ -69,6 +69,14 @@ export class OneBotClient extends EventEmitter {
 
   async connect(): Promise<void> {
     if (this._destroyed) return;
+
+    // Clean up any old ws instance before creating a new one
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      try { this.ws.terminate(); } catch { /* ignore */ }
+      this.ws = null;
+    }
+
     return new Promise<void>((resolve, reject) => {
       try {
         const headers: Record<string, string> = {};
@@ -162,16 +170,31 @@ export class OneBotClient extends EventEmitter {
 
     return new Promise<void>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
+      let destroyChecker: ReturnType<typeof setInterval> | null = null;
+
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        if (destroyChecker) clearInterval(destroyChecker);
+        this.removeListener("connected", onConnected);
+      };
 
       const onConnected = () => {
-        if (timer) clearTimeout(timer);
+        cleanup();
         resolve();
       };
 
       timer = setTimeout(() => {
-        this.removeListener("connected", onConnected);
+        cleanup();
         reject(new Error("WebSocket not connected (reconnect timeout)"));
       }, timeoutMs);
+
+      // Check for destroy periodically to avoid hanging forever
+      destroyChecker = setInterval(() => {
+        if (this._destroyed) {
+          cleanup();
+          reject(new Error("Client destroyed"));
+        }
+      }, 200);
 
       this.once("connected", onConnected);
     });
@@ -330,8 +353,12 @@ export class OneBotClient extends EventEmitter {
     this.stopHeartbeatMonitor();
     this.heartbeatTimer = setInterval(() => {
       if (!this._connected || !this.ws) return;
+
+      // If we already have a pong timer running, don't send another ping
+      if (this.pongTimer) return;
+
       const elapsed = Date.now() - this.lastEventAt;
-      if (elapsed > OneBotClient.HEARTBEAT_INTERVAL_MS) {
+      if (elapsed >= OneBotClient.HEARTBEAT_INTERVAL_MS) {
         // No events in a while, send a ping and start pong timeout
         try {
           this.ws.ping();
@@ -366,20 +393,23 @@ export class OneBotClient extends EventEmitter {
     }
   }
 
-  /** Force-close the WS and trigger reconnect cycle. */
+  /** Force-close the WS and actively drive reconnect cycle. */
   private forceReconnect(reason: string): void {
     if (this._destroyed) return;
+    this._connected = false;
     this.stopHeartbeatMonitor();
     this.clearPongTimer();
     if (this.ws) {
       try {
+        this.ws.removeAllListeners();
         this.ws.terminate();
       } catch {
         // ignore
       }
+      this.ws = null;
     }
-    // The 'close' handler on the ws will fire, which sets _connected = false,
-    // emits 'disconnected', and calls scheduleReconnect.
+    this.emit("disconnected", reason);
+    this.scheduleReconnect();
   }
 
   private rejectAllPending(reason: string): void {
