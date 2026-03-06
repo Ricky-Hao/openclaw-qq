@@ -53,6 +53,8 @@ export class OneBotClient extends EventEmitter {
   static readonly PONG_TIMEOUT_MS = 10_000;
   static readonly API_TIMEOUT_MS = 15_000;
   static readonly RECONNECT_WAIT_MS = 10_000;
+  static readonly DEFAULT_MAX_RETRIES = 2;
+  static readonly DEFAULT_RETRY_DELAY_MS = 1500;
 
   constructor(config: OneBotClientConfig) {
     super();
@@ -203,10 +205,58 @@ export class OneBotClient extends EventEmitter {
   /**
    * Call a OneBot API action and wait for the response.
    * If disconnected, waits up to RECONNECT_WAIT_MS for reconnection before failing.
+   * Automatically retries on transient network/connection errors with exponential backoff.
    */
   async callApi(
     action: string,
     params: Record<string, unknown> = {},
+    opts?: { maxRetries?: number; retryDelayMs?: number },
+  ): Promise<unknown> {
+    const maxRetries = opts?.maxRetries ?? OneBotClient.DEFAULT_MAX_RETRIES;
+    const baseDelay = opts?.retryDelayMs ?? OneBotClient.DEFAULT_RETRY_DELAY_MS;
+
+    let lastErr: Error | undefined;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await this._sendApiCall(action, params);
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+
+        // Non-retryable errors — bail immediately
+        if (this._isNonRetryable(lastErr)) {
+          throw lastErr;
+        }
+
+        // If we have retries left, wait with exponential backoff then retry
+        if (attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt); // 1.5s → 3s
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    throw lastErr!;
+  }
+
+  /** Determine if an error should NOT be retried. */
+  private _isNonRetryable(err: Error): boolean {
+    const msg = err.message;
+    // OneBot API business errors (retcode != 0) — retrying won't help
+    if (msg.includes("OneBot API error")) return true;
+    // API call timeouts — already waited long enough
+    if (msg.includes("timed out")) return true;
+    // Client destroyed
+    if (msg.includes("Client destroyed")) return true;
+    // Everything else (disconnected, send failures) is retryable
+    return false;
+  }
+
+  /**
+   * Send a single API call and wait for the response.
+   * If disconnected, waits up to RECONNECT_WAIT_MS for reconnection before failing.
+   */
+  private async _sendApiCall(
+    action: string,
+    params: Record<string, unknown>,
   ): Promise<unknown> {
     // If not connected, wait for reconnection instead of failing immediately
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -228,10 +278,7 @@ export class OneBotClient extends EventEmitter {
 
       // Re-check ws is still open (could have disconnected between await and here)
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        // Don't send — leave pending call in the map; it will either:
-        // - be resolved when we reconnect and the server replays (unlikely for OneBot)
-        // - time out via the timer above
-        // For safety, reject immediately since the echo won't be answered
+        // Don't send — reject immediately since the echo won't be answered
         clearTimeout(timer);
         this.pendingCalls.delete(echo);
         reject(new Error("WebSocket disconnected during send"));
