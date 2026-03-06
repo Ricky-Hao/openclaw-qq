@@ -296,6 +296,31 @@ async function handleInboundMessage(
     msgCtx.MediaUrls = imageUrls;
     msgCtx.MediaType = "image";
     msgCtx.MediaTypes = imageUrls.map(() => "image");
+
+    // Download images to local temp files so OpenClaw core can inject them
+    // into the LLM context as image blocks (core requires MediaPaths)
+    const downloadedPaths: string[] = [];
+    for (const url of imageUrls) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const contentType = resp.headers.get("content-type") || "image/jpeg";
+        const ext = contentType.includes("png") ? ".png"
+          : contentType.includes("gif") ? ".gif"
+          : ".jpg";
+        const tmpPath = `/tmp/qq_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+        const buffer = Buffer.from(await resp.arrayBuffer());
+        const { writeFile } = await import("node:fs/promises");
+        await writeFile(tmpPath, buffer);
+        downloadedPaths.push(tmpPath);
+      } catch (err) {
+        log?.warn?.(`Failed to download QQ image: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (downloadedPaths.length > 0) {
+      msgCtx.MediaPath = downloadedPaths[0];
+      msgCtx.MediaPaths = downloadedPaths;
+    }
   }
 
   // ── Finalize context ────────────────────────────────────────────
