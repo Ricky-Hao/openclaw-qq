@@ -139,6 +139,25 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
         return { ok: true, to };
       }
 
+      // OpenClaw core stores targets as "channel:<id>" — extract the id
+      if (to.startsWith("channel:")) {
+        const id = to.slice("channel:".length);
+        const num = parseInt(id, 10);
+        if (!isNaN(num)) {
+          // Check if this is a known group
+          const accountId = params.accountId || defaultAccountId(params.cfg!);
+          try {
+            const account = resolveAccount(params.cfg!, accountId);
+            if (account.groupAllowFrom.includes(id)) {
+              return { ok: true, to: `qq:group:${id}` };
+            }
+          } catch {
+            // ignore resolve errors
+          }
+          return { ok: true, to: `qq:${id}` };
+        }
+      }
+
       // Bare number — check if it's a known group from allowedGroups config
       const num = parseInt(to, 10);
       if (!isNaN(num)) {

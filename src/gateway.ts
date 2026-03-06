@@ -242,7 +242,7 @@ async function handleInboundMessage(
     event.sender.card || event.sender.nickname || senderId;
   const chatType = isGroup ? "group" : "direct";
   const from = isGroup ? `qq:group:${groupId}` : `qq:${senderId}`;
-  const to = isGroup ? `qq:group:${groupId}` : `qq:${account.botQQ}`;
+  const to = isGroup ? `qq:group:${groupId}` : `qq:${senderId}`;
   const messageSid = `qq_${event.message_id}`;
 
   // ── Resolve agent route ─────────────────────────────────────────
@@ -405,7 +405,7 @@ async function deliverReply(
   // Send media (images)
   if (payload.mediaUrl) {
     try {
-      await client.sendMessage(target, [buildMediaSegment(payload.mediaUrl)]);
+      await client.sendMessage(target, [buildMediaSegment(payload.mediaUrl!)]);
     } catch (err) {
       log?.error(
         `Failed to send media: ${err instanceof Error ? err.message : String(err)}`,
