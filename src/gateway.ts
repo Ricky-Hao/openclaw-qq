@@ -25,15 +25,14 @@ import {
 const IMAGE_DOWNLOAD_CONCURRENCY = 3;
 
 /**
- * Parse a history message's segments into a text line and image URLs.
- * Returns { line, imageUrls } where `line` has [图片x<N>] / [文件: name] markers.
+ * Parse a history message's segments into a text summary.
+ * Returns a string with [图片x<N>] / [文件: name] markers for non-text content.
  */
 export function parseHistoryMessageSegments(
   segs: Array<{ type: string; data: Record<string, string> }> | undefined | null,
-): { text: string; imageUrls: string[] } {
+): string {
   const textParts: string[] = [];
   let imageCount = 0;
-  const imageUrls: string[] = [];
   const fileNames: string[] = [];
 
   for (const seg of (segs || [])) {
@@ -43,8 +42,6 @@ export function parseHistoryMessageSegments(
       textParts.push(`[表情${seg.data.id}]`);
     } else if (seg.type === "image") {
       imageCount++;
-      const url = seg.data.url || seg.data.file;
-      if (url) imageUrls.push(url);
     } else if (seg.type === "file") {
       const name = seg.data.name || seg.data.file || "未知文件";
       fileNames.push(name);
@@ -60,7 +57,7 @@ export function parseHistoryMessageSegments(
   }
   if (!line) line = "[非文本消息]";
 
-  return { text: line, imageUrls };
+  return line;
 }
 
 /**
@@ -83,7 +80,7 @@ export async function downloadImageToTmp(
     await writeFile(tmpPath, buffer);
     return tmpPath;
   } catch (err) {
-    log?.warn?.(`Failed to download QQ image: ${err instanceof Error ? err.message : String(err)}`);
+    log?.warn(`Failed to download QQ image: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -312,18 +309,21 @@ export async function handleInboundMessage(
 
         if (contextMsgs.length > 0) {
           inboundHistory = contextMsgs.map((m) => {
-            const sender = (m.sender as Record<string, string>)?.card
-              || (m.sender as Record<string, string>)?.nickname
+            const senderObj = m.sender as Record<string, string> | undefined | null;
+            const sender = senderObj?.card
+              || senderObj?.nickname
               || String(m.user_id);
             const segs = m.message as Array<{ type: string; data: Record<string, string> }>;
-            const parsed = parseHistoryMessageSegments(segs);
-            const timestamp = typeof m.time === "number" ? (m.time as number) * 1000 : Date.now();
-            return { sender, body: parsed.text, timestamp };
+            const body = parseHistoryMessageSegments(segs);
+            const timestamp = typeof m.time === "number"
+              ? (m.time as number) * 1000
+              : (event.time ? event.time * 1000 : Date.now());
+            return { sender, body, timestamp };
           });
         }
       }
     } catch (err) {
-      log?.warn?.(`Failed to fetch group history: ${err instanceof Error ? err.message : String(err)}`);
+      log?.warn(`Failed to fetch group history: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -373,8 +373,10 @@ export async function handleInboundMessage(
     CommandAuthorized: commandAuthorized,
     OriginatingChannel: "qq",
     OriginatingTo: to,
-    InboundHistory: inboundHistory,
   };
+
+  // Conditionally add InboundHistory only when available
+  if (inboundHistory) msgCtx.InboundHistory = inboundHistory;
 
   // Attach media if present (current message images only)
   const allImageUrls = imageUrls;

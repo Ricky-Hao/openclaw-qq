@@ -18,8 +18,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'text', data: { text: 'world!' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('Hello world!');
-    expect(result.imageUrls).toEqual([]);
+    expect(result).toBe('Hello world!');
   });
 
   it('should include face segments as [表情XX]', () => {
@@ -28,7 +27,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'face', data: { id: '76' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('Hi [表情76]');
+    expect(result).toBe('Hi [表情76]');
   });
 
   it('should count images and append [图片xN] marker', () => {
@@ -38,37 +37,31 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'image', data: { url: 'https://example.com/2.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('Look at this [图片x2]');
-    expect(result.imageUrls).toEqual([
-      'https://example.com/1.jpg',
-      'https://example.com/2.jpg',
-    ]);
+    expect(result).toBe('Look at this [图片x2]');
   });
 
-  it('should extract image URL from data.file when data.url is missing', () => {
+  it('should count image even when data.file is used instead of data.url', () => {
     const segs = [
       { type: 'image', data: { file: 'https://example.com/file.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('[图片x1]');
-    expect(result.imageUrls).toEqual(['https://example.com/file.jpg']);
+    expect(result).toBe('[图片x1]');
   });
 
-  it('should prefer data.url over data.file for images', () => {
+  it('should count images regardless of url/file fields', () => {
     const segs = [
       { type: 'image', data: { url: 'https://example.com/url.jpg', file: 'https://example.com/file.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.imageUrls).toEqual(['https://example.com/url.jpg']);
+    expect(result).toBe('[图片x1]');
   });
 
-  it('should skip images without url or file', () => {
+  it('should count images even without url or file', () => {
     const segs = [
       { type: 'image', data: {} },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('[图片x1]');
-    expect(result.imageUrls).toEqual([]);
+    expect(result).toBe('[图片x1]');
   });
 
   it('should append [文件: name] for file segments', () => {
@@ -77,8 +70,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'file', data: { name: 'report.pdf' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('Here is a doc [文件: report.pdf]');
-    expect(result.imageUrls).toEqual([]);
+    expect(result).toBe('Here is a doc [文件: report.pdf]');
   });
 
   it('should use data.file for file name when data.name is missing', () => {
@@ -86,7 +78,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'file', data: { file: 'document.docx' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('[文件: document.docx]');
+    expect(result).toBe('[文件: document.docx]');
   });
 
   it('should use "未知文件" when file has no name or file field', () => {
@@ -94,7 +86,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'file', data: {} },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('[文件: 未知文件]');
+    expect(result).toBe('[文件: 未知文件]');
   });
 
   it('should handle mixed segments: text + images + files', () => {
@@ -105,19 +97,17 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'face', data: { id: '14' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('Check these: [表情14] [图片x1] [文件: notes.txt]');
-    expect(result.imageUrls).toEqual(['https://example.com/pic.jpg']);
+    expect(result).toBe('Check these: [表情14] [图片x1] [文件: notes.txt]');
   });
 
   it('should return [非文本消息] for empty segments', () => {
     const result = parseHistoryMessageSegments([]);
-    expect(result.text).toBe('[非文本消息]');
-    expect(result.imageUrls).toEqual([]);
+    expect(result).toBe('[非文本消息]');
   });
 
   it('should return [非文本消息] for null/undefined segments', () => {
-    expect(parseHistoryMessageSegments(null).text).toBe('[非文本消息]');
-    expect(parseHistoryMessageSegments(undefined).text).toBe('[非文本消息]');
+    expect(parseHistoryMessageSegments(null)).toBe('[非文本消息]');
+    expect(parseHistoryMessageSegments(undefined)).toBe('[非文本消息]');
   });
 
   it('should return [非文本消息] for only unknown segment types', () => {
@@ -125,7 +115,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'share', data: { url: 'https://example.com' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('[非文本消息]');
+    expect(result).toBe('[非文本消息]');
   });
 
   it('should handle image-only messages with [图片xN] as text', () => {
@@ -135,8 +125,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'image', data: { url: 'https://example.com/c.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('[图片x3]');
-    expect(result.imageUrls).toHaveLength(3);
+    expect(result).toBe('[图片x3]');
   });
 
   it('should handle multiple files', () => {
@@ -145,7 +134,7 @@ describe('parseHistoryMessageSegments', () => {
       { type: 'file', data: { name: 'b.doc' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result.text).toBe('[文件: a.pdf] [文件: b.doc]');
+    expect(result).toBe('[文件: a.pdf] [文件: b.doc]');
   });
 });
 
@@ -813,6 +802,38 @@ describe('handleInboundMessage — InboundHistory', () => {
     expect(history[1].sender).toBe('222');
   });
 
+  // ── Test 10b: Missing sender object — fallback to user_id ──────
+
+  it('should fallback to user_id when sender is undefined or null', async () => {
+    const historyMessages = [
+      {
+        message_id: 9001,
+        user_id: 333,
+        sender: undefined,
+        message: [{ type: 'text', data: { text: 'no sender obj' } }],
+        time: 1772956800,
+      },
+      {
+        message_id: 9002,
+        user_id: 444,
+        sender: null,
+        message: [{ type: 'text', data: { text: 'null sender' } }],
+        time: 1772956810,
+      },
+    ];
+
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient(historyMessages);
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
+    expect(history).toHaveLength(2);
+    expect(history[0].sender).toBe('333');
+    expect(history[1].sender).toBe('444');
+  });
+
   // ── Test 11: History fetch failure — graceful degradation ───────
 
   it('should set InboundHistory to undefined if history fetch fails', async () => {
@@ -857,5 +878,29 @@ describe('handleInboundMessage — InboundHistory', () => {
 
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
     expect(history[0].timestamp).toBe(1700000000000); // milliseconds
+  });
+
+  // ── Test 12b: Missing time falls back to event.time ─────────────
+
+  it('should fallback to event.time when history message has no time field', async () => {
+    const historyMessages = [
+      {
+        message_id: 9001,
+        user_id: 111,
+        sender: { card: 'Test', nickname: 'Test' },
+        message: [{ type: 'text', data: { text: 'no timestamp' } }],
+        // no time field
+      },
+    ];
+
+    const event = makeGroupEvent({ time: 1772956830 });
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient(historyMessages);
+
+    await handleInboundMessage(event, account, cfg, runtime, client, log);
+
+    const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
+    expect(history[0].timestamp).toBe(1772956830 * 1000); // event.time * 1000
   });
 });
