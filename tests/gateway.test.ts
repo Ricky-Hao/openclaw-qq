@@ -30,38 +30,38 @@ describe('parseHistoryMessageSegments', () => {
     expect(result).toBe('Hi [表情76]');
   });
 
-  it('should count images and append [图片xN] marker', () => {
+  it('should count images and append per-image resolve hints', () => {
     const segs = [
       { type: 'text', data: { text: 'Look at this' } },
-      { type: 'image', data: { url: 'https://example.com/1.jpg' } },
-      { type: 'image', data: { url: 'https://example.com/2.jpg' } },
+      { type: 'image', data: { file: '5E28D43A2FE346F995BC1D0F5D82829F.jpg' } },
+      { type: 'image', data: { file: 'A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result).toBe('Look at this [图片x2]');
+    expect(result).toBe('Look at this [图片 - 使用 qq_resolve_image(file: "5E28D43A2FE346F995BC1D0F5D82829F.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg") 获取]');
   });
 
-  it('should count image even when data.file is used instead of data.url', () => {
+  it('should render resolve hint when data.file is present', () => {
     const segs = [
-      { type: 'image', data: { file: 'https://example.com/file.jpg' } },
+      { type: 'image', data: { file: 'ABC123.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result).toBe('[图片x1]');
+    expect(result).toBe('[图片 - 使用 qq_resolve_image(file: "ABC123.jpg") 获取]');
   });
 
-  it('should count images regardless of url/file fields', () => {
+  it('should use file field for resolve hint', () => {
     const segs = [
-      { type: 'image', data: { url: 'https://example.com/url.jpg', file: 'https://example.com/file.jpg' } },
+      { type: 'image', data: { url: 'https://example.com/url.jpg', file: 'HASH123.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result).toBe('[图片x1]');
+    expect(result).toBe('[图片 - 使用 qq_resolve_image(file: "HASH123.jpg") 获取]');
   });
 
-  it('should count images even without url or file', () => {
+  it('should use fallback [图片] when file hash is missing', () => {
     const segs = [
       { type: 'image', data: {} },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result).toBe('[图片x1]');
+    expect(result).toBe('[图片]');
   });
 
   it('should append [文件: name] for file segments', () => {
@@ -92,12 +92,12 @@ describe('parseHistoryMessageSegments', () => {
   it('should handle mixed segments: text + images + files', () => {
     const segs = [
       { type: 'text', data: { text: 'Check these: ' } },
-      { type: 'image', data: { url: 'https://example.com/pic.jpg' } },
+      { type: 'image', data: { file: 'PIC123.jpg' } },
       { type: 'file', data: { name: 'notes.txt' } },
       { type: 'face', data: { id: '14' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result).toBe('Check these: [表情14] [图片x1] [文件: notes.txt]');
+    expect(result).toBe('Check these: [表情14] [图片 - 使用 qq_resolve_image(file: "PIC123.jpg") 获取] [文件: notes.txt]');
   });
 
   it('should return [非文本消息] for empty segments', () => {
@@ -118,14 +118,14 @@ describe('parseHistoryMessageSegments', () => {
     expect(result).toBe('[非文本消息]');
   });
 
-  it('should handle image-only messages with [图片xN] as text', () => {
+  it('should handle image-only messages with per-image hints', () => {
     const segs = [
-      { type: 'image', data: { url: 'https://example.com/a.jpg' } },
-      { type: 'image', data: { url: 'https://example.com/b.jpg' } },
-      { type: 'image', data: { url: 'https://example.com/c.jpg' } },
+      { type: 'image', data: { file: 'A.jpg' } },
+      { type: 'image', data: { file: 'B.jpg' } },
+      { type: 'image', data: { file: 'C.jpg' } },
     ];
     const result = parseHistoryMessageSegments(segs);
-    expect(result).toBe('[图片x3]');
+    expect(result).toBe('[图片 - 使用 qq_resolve_image(file: "A.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "B.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "C.jpg") 获取]');
   });
 
   it('should handle multiple files', () => {
@@ -496,9 +496,9 @@ describe('handleInboundMessage — InboundHistory', () => {
     ]);
   });
 
-  // ── Test 2: Image placeholders in history, NOT in MediaPaths ────
+  // ── Test 2: Image resolve hints in history, NOT in MediaPaths ──
 
-  it('should include [图片xN] in history body but NOT put history images in MediaPaths', async () => {
+  it('should include per-image resolve hints in history body but NOT put history images in MediaPaths', async () => {
     const historyMessages = [
       {
         message_id: 9001,
@@ -506,8 +506,8 @@ describe('handleInboundMessage — InboundHistory', () => {
         sender: { card: '李四', nickname: 'lisi' },
         message: [
           { type: 'text', data: { text: '这是什么？' } },
-          { type: 'image', data: { url: 'https://example.com/hist1.jpg' } },
-          { type: 'image', data: { url: 'https://example.com/hist2.jpg' } },
+          { type: 'image', data: { file: '5E28D43A2FE346F995BC1D0F5D82829F.jpg' } },
+          { type: 'image', data: { file: 'A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg' } },
         ],
         time: 1772956800,
       },
@@ -520,10 +520,10 @@ describe('handleInboundMessage — InboundHistory', () => {
     await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
 
     expect(capturedCtx).not.toBeNull();
-    // History should have image placeholders
+    // History should have per-image resolve hints
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
     expect(history).toHaveLength(1);
-    expect(history[0].body).toBe('这是什么？ [图片x2]');
+    expect(history[0].body).toBe('这是什么？ [图片 - 使用 qq_resolve_image(file: "5E28D43A2FE346F995BC1D0F5D82829F.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg") 获取]');
 
     // MediaPaths/MediaUrls should NOT contain history images
     // (current message "看看猫" has no images)
@@ -540,7 +540,7 @@ describe('handleInboundMessage — InboundHistory', () => {
         user_id: 222,
         sender: { card: '李四', nickname: 'lisi' },
         message: [
-          { type: 'image', data: { url: 'https://example.com/hist1.jpg' } },
+          { type: 'image', data: { file: 'HIST123.jpg' } },
         ],
         time: 1772956800,
       },
@@ -579,9 +579,9 @@ describe('handleInboundMessage — InboundHistory', () => {
     expect(capturedCtx!.MediaPaths).toBeDefined();
     expect((capturedCtx!.MediaPaths as string[]).length).toBe(2);
 
-    // History should still mention the image as placeholder
+    // History should have per-image resolve hint
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
-    expect(history[0].body).toBe('[图片x1]');
+    expect(history[0].body).toBe('[图片 - 使用 qq_resolve_image(file: "HIST123.jpg") 获取]');
 
     // Cleanup temp files
     for (const p of capturedCtx!.MediaPaths as string[]) {
@@ -591,16 +591,16 @@ describe('handleInboundMessage — InboundHistory', () => {
 
   // ── Test 4: Mixed scenario — history + current images ───────────
 
-  it('should separate history images (placeholders only) from current images (MediaPaths)', async () => {
+  it('should separate history images (resolve hints) from current images (MediaPaths)', async () => {
     const historyMessages = [
       {
         message_id: 9001,
         user_id: 333,
         sender: { card: '王五', nickname: 'wangwu' },
         message: [
-          { type: 'image', data: { url: 'https://example.com/h1.jpg' } },
-          { type: 'image', data: { url: 'https://example.com/h2.jpg' } },
-          { type: 'image', data: { url: 'https://example.com/h3.jpg' } },
+          { type: 'image', data: { file: 'H1.jpg' } },
+          { type: 'image', data: { file: 'H2.jpg' } },
+          { type: 'image', data: { file: 'H3.jpg' } },
         ],
         time: 1772956800,
       },
@@ -632,9 +632,9 @@ describe('handleInboundMessage — InboundHistory', () => {
     expect(capturedCtx!.MediaUrls).toEqual(['https://example.com/mine.jpg']);
     expect((capturedCtx!.MediaPaths as string[]).length).toBe(1);
 
-    // History shows 3 images as placeholder
+    // History shows 3 images with per-image resolve hints
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
-    expect(history[0].body).toBe('[图片x3]');
+    expect(history[0].body).toBe('[图片 - 使用 qq_resolve_image(file: "H1.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "H2.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "H3.jpg") 获取]');
 
     // Cleanup
     for (const p of capturedCtx!.MediaPaths as string[]) {

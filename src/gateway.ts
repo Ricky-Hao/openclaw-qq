@@ -26,13 +26,13 @@ const IMAGE_DOWNLOAD_CONCURRENCY = 3;
 
 /**
  * Parse a history message's segments into a text summary.
- * Returns a string with [图片x<N>] / [文件: name] markers for non-text content.
+ * Returns a string with per-image resolve hints and [文件: name] markers for non-text content.
  */
 export function parseHistoryMessageSegments(
   segs: Array<{ type: string; data: Record<string, string> }> | undefined | null,
 ): string {
   const textParts: string[] = [];
-  let imageCount = 0;
+  const imageParts: string[] = [];
   const fileNames: string[] = [];
 
   for (const seg of (segs || [])) {
@@ -41,7 +41,13 @@ export function parseHistoryMessageSegments(
     } else if (seg.type === "face") {
       textParts.push(`[表情${seg.data.id}]`);
     } else if (seg.type === "image") {
-      imageCount++;
+      const file = seg.data.file;
+      if (file) {
+        imageParts.push(`[图片 - 使用 qq_resolve_image(file: "${file}") 获取]`);
+      } else {
+        // Fallback for images without file hash (shouldn't happen in history, but defensive)
+        imageParts.push(`[图片]`);
+      }
     } else if (seg.type === "file") {
       const name = seg.data.name || seg.data.file || "未知文件";
       fileNames.push(name);
@@ -49,8 +55,8 @@ export function parseHistoryMessageSegments(
   }
 
   let line = textParts.join("").trim();
-  if (imageCount > 0) {
-    line = line ? `${line} [图片x${imageCount}]` : `[图片x${imageCount}]`;
+  for (const imgPart of imageParts) {
+    line = line ? `${line} ${imgPart}` : imgPart;
   }
   for (const fn of fileNames) {
     line = line ? `${line} [文件: ${fn}]` : `[文件: ${fn}]`;
