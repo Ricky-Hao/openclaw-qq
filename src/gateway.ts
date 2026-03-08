@@ -21,9 +21,6 @@ import {
   buildTarget,
 } from "./onebot/message.js";
 
-/** Max number of images to extract from group context history. */
-const MAX_CONTEXT_IMAGES = 10;
-
 /** Max concurrent image downloads. */
 const IMAGE_DOWNLOAD_CONCURRENCY = 3;
 
@@ -234,7 +231,8 @@ export async function stopAccount(
 
 // ── Inbound Message Routing ─────────────────────────────────────────
 
-async function handleInboundMessage(
+/** @internal Exported for testing. */
+export async function handleInboundMessage(
   event: OneBotMessageEvent,
   account: QQResolvedAccount,
   cfg: OpenClawConfig,
@@ -297,8 +295,7 @@ async function handleInboundMessage(
   }).catch((err) => { log?.warn(`Failed to set processing emoji: ${err instanceof Error ? err.message : String(err)}`); });
 
   // ── Fetch group context (recent messages before this one) ───────
-  let groupContext = "";
-  const contextImageUrls: string[] = [];
+  let inboundHistory: Array<{ sender: string; body: string; timestamp: number }> | undefined;
   if (isGroup && account.groupContextMessages > 0) {
     try {
       const histResult = await client.callApi("get_group_msg_history", {
@@ -310,32 +307,19 @@ async function handleInboundMessage(
       if (messages && messages.length > 0) {
         // Filter out only the current message itself; keep bot's own messages for full context
         const contextMsgs = messages
-          .filter((m) => {
-            const mid = m.message_id as number;
-            return mid !== event.message_id;
-          })
+          .filter((m) => (m.message_id as number) !== event.message_id)
           .slice(-(account.groupContextMessages)); // take last N
 
         if (contextMsgs.length > 0) {
-          const lines: string[] = [];
-
-          for (const m of contextMsgs) {
+          inboundHistory = contextMsgs.map((m) => {
             const sender = (m.sender as Record<string, string>)?.card
               || (m.sender as Record<string, string>)?.nickname
               || String(m.user_id);
             const segs = m.message as Array<{ type: string; data: Record<string, string> }>;
             const parsed = parseHistoryMessageSegments(segs);
-            lines.push(`${sender}: ${parsed.text}`);
-
-            // Collect image URLs up to the limit
-            for (const url of parsed.imageUrls) {
-              if (contextImageUrls.length < MAX_CONTEXT_IMAGES) {
-                contextImageUrls.push(url);
-              }
-            }
-          }
-
-          groupContext = `[以下是群聊中最近的${contextMsgs.length}条消息，供你了解上下文]\n${lines.join("\n")}\n[以上是历史消息，以下是用户@你的消息]`;
+            const timestamp = typeof m.time === "number" ? (m.time as number) * 1000 : Date.now();
+            return { sender, body: parsed.text, timestamp };
+          });
         }
       }
     } catch (err) {
@@ -365,13 +349,9 @@ async function handleInboundMessage(
   const commandAuthorized = account.allowFrom.includes(senderId);
 
   // ── Build MsgContext ────────────────────────────────────────────
-  const bodyForAgent = groupContext
-    ? `${groupContext}\n\n${rawText}`
-    : rawText;
-
   const msgCtx: Record<string, unknown> = {
     Body: rawText,
-    BodyForAgent: bodyForAgent,
+    BodyForAgent: rawText,
     RawBody: rawText,
     CommandBody: rawText,
     From: from,
@@ -393,10 +373,11 @@ async function handleInboundMessage(
     CommandAuthorized: commandAuthorized,
     OriginatingChannel: "qq",
     OriginatingTo: to,
+    InboundHistory: inboundHistory,
   };
 
-  // Attach media if present (current message images + context history images)
-  const allImageUrls = [...imageUrls, ...contextImageUrls]; // current message first, then context
+  // Attach media if present (current message images only)
+  const allImageUrls = imageUrls;
   if (allImageUrls.length > 0) {
     msgCtx.MediaUrl = allImageUrls[0];
     msgCtx.MediaUrls = allImageUrls;
