@@ -21,6 +21,103 @@ import {
   buildTarget,
 } from "./onebot/message.js";
 
+/** Max number of images to extract from group context history. */
+const MAX_CONTEXT_IMAGES = 10;
+
+/** Max concurrent image downloads. */
+const IMAGE_DOWNLOAD_CONCURRENCY = 3;
+
+/**
+ * Parse a history message's segments into a text line and image URLs.
+ * Returns { line, imageUrls } where `line` has [图片x<N>] / [文件: name] markers.
+ */
+export function parseHistoryMessageSegments(
+  segs: Array<{ type: string; data: Record<string, string> }> | undefined | null,
+): { text: string; imageUrls: string[] } {
+  const textParts: string[] = [];
+  let imageCount = 0;
+  const imageUrls: string[] = [];
+  const fileNames: string[] = [];
+
+  for (const seg of (segs || [])) {
+    if (seg.type === "text") {
+      textParts.push(seg.data.text);
+    } else if (seg.type === "face") {
+      textParts.push(`[表情${seg.data.id}]`);
+    } else if (seg.type === "image") {
+      imageCount++;
+      const url = seg.data.url || seg.data.file;
+      if (url) imageUrls.push(url);
+    } else if (seg.type === "file") {
+      const name = seg.data.name || seg.data.file || "未知文件";
+      fileNames.push(name);
+    }
+  }
+
+  let line = textParts.join("").trim();
+  if (imageCount > 0) {
+    line = line ? `${line} [图片x${imageCount}]` : `[图片x${imageCount}]`;
+  }
+  for (const fn of fileNames) {
+    line = line ? `${line} [文件: ${fn}]` : `[文件: ${fn}]`;
+  }
+  if (!line) line = "[非文本消息]";
+
+  return { text: line, imageUrls };
+}
+
+/**
+ * Download an image URL to a temp file. Returns the local path or null on failure.
+ */
+export async function downloadImageToTmp(
+  url: string,
+  log?: { warn: (msg: string) => void },
+): Promise<string | null> {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const contentType = resp.headers.get("content-type") || "image/jpeg";
+    const ext = contentType.includes("png") ? ".png"
+      : contentType.includes("gif") ? ".gif"
+      : ".jpg";
+    const tmpPath = `/tmp/qq_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(tmpPath, buffer);
+    return tmpPath;
+  } catch (err) {
+    log?.warn?.(`Failed to download QQ image: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Download multiple image URLs concurrently with a concurrency limit.
+ * Returns an array of { url, path } for successfully downloaded images.
+ */
+export async function downloadImagesWithConcurrency(
+  urls: string[],
+  concurrency: number,
+  log?: { warn: (msg: string) => void },
+): Promise<Array<{ url: string; path: string }>> {
+  const results: Array<{ url: string; path: string }> = [];
+  const queue = [...urls];
+  const workers: Promise<void>[] = [];
+
+  for (let i = 0; i < Math.min(concurrency, queue.length); i++) {
+    workers.push((async () => {
+      while (queue.length > 0) {
+        const url = queue.shift()!;
+        const path = await downloadImageToTmp(url, log);
+        if (path) results.push({ url, path });
+      }
+    })());
+  }
+
+  await Promise.all(workers);
+  return results;
+}
+
 /** Active client map keyed by accountId (for outbound adapter access). */
 const activeClients = new Map<string, OneBotClient>();
 
@@ -201,6 +298,7 @@ async function handleInboundMessage(
 
   // ── Fetch group context (recent messages before this one) ───────
   let groupContext = "";
+  const contextImageUrls: string[] = [];
   if (isGroup && account.groupContextMessages > 0) {
     try {
       const histResult = await client.callApi("get_group_msg_history", {
@@ -219,17 +317,24 @@ async function handleInboundMessage(
           .slice(-(account.groupContextMessages)); // take last N
 
         if (contextMsgs.length > 0) {
-          const lines = contextMsgs.map((m) => {
+          const lines: string[] = [];
+
+          for (const m of contextMsgs) {
             const sender = (m.sender as Record<string, string>)?.card
               || (m.sender as Record<string, string>)?.nickname
               || String(m.user_id);
             const segs = m.message as Array<{ type: string; data: Record<string, string> }>;
-            const text = segs
-              ?.filter((s) => s.type === "text")
-              .map((s) => s.data.text)
-              .join("") || "[非文本消息]";
-            return `${sender}: ${text}`;
-          });
+            const parsed = parseHistoryMessageSegments(segs);
+            lines.push(`${sender}: ${parsed.text}`);
+
+            // Collect image URLs up to the limit
+            for (const url of parsed.imageUrls) {
+              if (contextImageUrls.length < MAX_CONTEXT_IMAGES) {
+                contextImageUrls.push(url);
+              }
+            }
+          }
+
           groupContext = `[以下是群聊中最近的${contextMsgs.length}条消息，供你了解上下文]\n${lines.join("\n")}\n[以上是历史消息，以下是用户@你的消息]`;
         }
       }
@@ -290,34 +395,23 @@ async function handleInboundMessage(
     OriginatingTo: to,
   };
 
-  // Attach media if present
-  if (imageUrls.length > 0) {
-    msgCtx.MediaUrl = imageUrls[0];
-    msgCtx.MediaUrls = imageUrls;
+  // Attach media if present (current message images + context history images)
+  const allImageUrls = [...imageUrls, ...contextImageUrls]; // current message first, then context
+  if (allImageUrls.length > 0) {
+    msgCtx.MediaUrl = allImageUrls[0];
+    msgCtx.MediaUrls = allImageUrls;
     msgCtx.MediaType = "image";
-    msgCtx.MediaTypes = imageUrls.map(() => "image");
+    msgCtx.MediaTypes = allImageUrls.map(() => "image");
 
     // Download images to local temp files so OpenClaw core can inject them
     // into the LLM context as image blocks (core requires MediaPaths)
-    const downloadedPaths: string[] = [];
-    for (const url of imageUrls) {
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const contentType = resp.headers.get("content-type") || "image/jpeg";
-        const ext = contentType.includes("png") ? ".png"
-          : contentType.includes("gif") ? ".gif"
-          : ".jpg";
-        const tmpPath = `/tmp/qq_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
-        const buffer = Buffer.from(await resp.arrayBuffer());
-        const { writeFile } = await import("node:fs/promises");
-        await writeFile(tmpPath, buffer);
-        downloadedPaths.push(tmpPath);
-      } catch (err) {
-        log?.warn?.(`Failed to download QQ image: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    if (downloadedPaths.length > 0) {
+    const downloaded = await downloadImagesWithConcurrency(
+      allImageUrls,
+      IMAGE_DOWNLOAD_CONCURRENCY,
+      log as { warn: (msg: string) => void } | undefined,
+    );
+    if (downloaded.length > 0) {
+      const downloadedPaths = downloaded.map((d) => d.path);
       msgCtx.MediaPath = downloadedPaths[0];
       msgCtx.MediaPaths = downloadedPaths;
     }

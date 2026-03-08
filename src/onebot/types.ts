@@ -10,6 +10,10 @@ export type ImageSegment = {
   data: { file?: string; url?: string; type?: string };
 };
 export type ReplySegment = { type: "reply"; data: { id: string } };
+export type FileSegment = {
+  type: "file";
+  data: { file?: string; name?: string; url?: string; size?: string };
+};
 
 export type MessageSegment =
   | TextSegment
@@ -17,6 +21,7 @@ export type MessageSegment =
   | FaceSegment
   | ImageSegment
   | ReplySegment
+  | FileSegment
   | { type: string; data: Record<string, string> };
 
 // ── Sender ──────────────────────────────────────────────────────────
