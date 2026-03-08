@@ -125,6 +125,12 @@ export function getActiveClient(accountId: string): OneBotClient | undefined {
   return activeClients.get(accountId);
 }
 
+/** Return any active client (for tools that don't know the account ID). */
+export function getAnyActiveClient(): OneBotClient | undefined {
+  for (const client of activeClients.values()) return client;
+  return undefined;
+}
+
 // ── Start Account ───────────────────────────────────────────────────
 
 export async function startAccount(
