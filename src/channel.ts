@@ -27,11 +27,43 @@ import {
   buildImageSegment,
   buildMediaSegment,
 } from "./onebot/message.js";
+import { existsSync } from "node:fs";
+import { resolve, isAbsolute } from "node:path";
 import {
   emojiToQQEmojiId,
   getSupportedEmojiList,
 } from "./emoji.js";
 import { handlePollAction } from "./poll.js";
+
+/**
+ * Resolve a potentially relative media path against mediaLocalRoots.
+ * If the path is already absolute or a URL, return as-is.
+ * For relative paths, try each root until we find a file that exists.
+ */
+function resolveMediaPath(
+  pathOrUrl: string,
+  mediaLocalRoots?: readonly string[],
+): string {
+  // URLs — pass through
+  if (/^https?:\/\//i.test(pathOrUrl) || pathOrUrl.startsWith("base64://") || pathOrUrl.startsWith("file://")) {
+    return pathOrUrl;
+  }
+  // Absolute path — pass through
+  if (isAbsolute(pathOrUrl)) {
+    return pathOrUrl;
+  }
+  // Relative path — try mediaLocalRoots
+  if (mediaLocalRoots && mediaLocalRoots.length > 0) {
+    for (const root of mediaLocalRoots) {
+      const candidate = resolve(root, pathOrUrl);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  // Fallback: resolve against CWD (original behavior)
+  return pathOrUrl;
+}
 
 let _pluginRuntime: PluginRuntime | undefined;
 
@@ -214,7 +246,8 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
         segments.push(...buildTextSegments(ctx.text));
       }
       if (ctx.mediaUrl) {
-        segments.push(buildMediaSegment(ctx.mediaUrl));
+        const resolved = resolveMediaPath(ctx.mediaUrl, ctx.mediaLocalRoots);
+        segments.push(buildMediaSegment(resolved));
       }
       const msgId = await client.sendMessage(target, segments);
       return { channel: "qq", messageId: String(msgId) };
