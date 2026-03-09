@@ -1,10 +1,13 @@
 // OneBot v11 message segment parsing and building
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { basename, extname } from "node:path";
 import type { MessageSegment, MessageTarget } from "./types.js";
 
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"]);
+
+/** Maximum file size for local files sent as base64 (20 MB). */
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 /**
  * Extract plain text from an array of message segments,
@@ -123,6 +126,10 @@ export function buildImageSegment(urlOrBase64: string): MessageSegment {
   }
   // Local file path — convert to base64
   if (existsSync(urlOrBase64)) {
+    const stat = statSync(urlOrBase64);
+    if (stat.size > MAX_FILE_BYTES) {
+      throw new Error(`Image file too large: ${stat.size} bytes (max ${MAX_FILE_BYTES})`);
+    }
     const buf = readFileSync(urlOrBase64);
     return { type: "image", data: { file: `base64://${buf.toString("base64")}` } };
   }
@@ -138,6 +145,10 @@ export function buildFileSegment(pathOrUrl: string, filename?: string): MessageS
 
   // Local file path — convert to base64
   if (existsSync(pathOrUrl)) {
+    const stat = statSync(pathOrUrl);
+    if (stat.size > MAX_FILE_BYTES) {
+      throw new Error(`File too large: ${stat.size} bytes (max ${MAX_FILE_BYTES})`);
+    }
     const buf = readFileSync(pathOrUrl);
     return { type: "file", data: { file: `base64://${buf.toString("base64")}`, name } };
   }

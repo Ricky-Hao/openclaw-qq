@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseHistoryMessageSegments,
-  downloadImageToTmp,
-  downloadImagesWithConcurrency,
   handleInboundMessage,
 } from '../src/gateway.js';
 import { existsSync, unlinkSync, readFileSync } from 'node:fs';
@@ -137,218 +135,6 @@ describe('parseHistoryMessageSegments', () => {
     expect(result).toBe('[文件: a.pdf] [文件: b.doc]');
   });
 });
-
-// ── downloadImageToTmp ──────────────────────────────────────────────
-
-describe('downloadImageToTmp', () => {
-  const createdFiles: string[] = [];
-
-  afterEach(() => {
-    for (const f of createdFiles) {
-      try { if (existsSync(f)) unlinkSync(f); } catch { /* ignore */ }
-    }
-    createdFiles.length = 0;
-    vi.restoreAllMocks();
-  });
-
-  it('should download image and save to /tmp', async () => {
-    const fakeImageData = Buffer.from('fake-png-data');
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      headers: new Map([['content-type', 'image/png']]) as any,
-      arrayBuffer: () => Promise.resolve(fakeImageData.buffer.slice(
-        fakeImageData.byteOffset,
-        fakeImageData.byteOffset + fakeImageData.byteLength,
-      )),
-    }));
-
-    const path = await downloadImageToTmp('https://example.com/test.png');
-    expect(path).toBeTruthy();
-    expect(path).toMatch(/^\/tmp\/qq_img_.*\.png$/);
-    createdFiles.push(path!);
-
-    const content = readFileSync(path!);
-    expect(content.toString()).toBe('fake-png-data');
-  });
-
-  it('should use .jpg extension for jpeg content-type', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      headers: new Map([['content-type', 'image/jpeg']]) as any,
-      arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-    }));
-
-    const path = await downloadImageToTmp('https://example.com/test.jpg');
-    expect(path).toMatch(/\.jpg$/);
-    createdFiles.push(path!);
-  });
-
-  it('should use .gif extension for gif content-type', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      headers: new Map([['content-type', 'image/gif']]) as any,
-      arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-    }));
-
-    const path = await downloadImageToTmp('https://example.com/test.gif');
-    expect(path).toMatch(/\.gif$/);
-    createdFiles.push(path!);
-  });
-
-  it('should return null and log warning on HTTP error', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-    }));
-
-    const log = { warn: vi.fn() };
-    const path = await downloadImageToTmp('https://example.com/missing.jpg', log);
-    expect(path).toBeNull();
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('HTTP 404'));
-  });
-
-  it('should return null and log warning on fetch error', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
-
-    const log = { warn: vi.fn() };
-    const path = await downloadImageToTmp('https://example.com/fail.jpg', log);
-    expect(path).toBeNull();
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('Network error'));
-  });
-
-  it('should default to .jpg when no content-type header', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      headers: new Map() as any,
-      arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-    }));
-
-    const path = await downloadImageToTmp('https://example.com/noext');
-    expect(path).toMatch(/\.jpg$/);
-    createdFiles.push(path!);
-  });
-});
-
-// ── downloadImagesWithConcurrency ───────────────────────────────────
-
-describe('downloadImagesWithConcurrency', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('should download multiple images concurrently', async () => {
-    let callCount = 0;
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
-      callCount++;
-      return Promise.resolve({
-        ok: true,
-        headers: new Map([['content-type', 'image/jpeg']]) as any,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-      });
-    }));
-
-    const urls = [
-      'https://example.com/1.jpg',
-      'https://example.com/2.jpg',
-      'https://example.com/3.jpg',
-    ];
-
-    const results = await downloadImagesWithConcurrency(urls, 3);
-
-    expect(results).toHaveLength(3);
-    expect(callCount).toBe(3);
-
-    for (const r of results) {
-      expect(r.url).toBeTruthy();
-      expect(r.path).toMatch(/^\/tmp\/qq_img_/);
-      // Cleanup
-      try { unlinkSync(r.path); } catch { /* ignore */ }
-    }
-  });
-
-  it('should respect concurrency limit', async () => {
-    let concurrent = 0;
-    let maxConcurrent = 0;
-
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
-      concurrent++;
-      maxConcurrent = Math.max(maxConcurrent, concurrent);
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          concurrent--;
-          resolve({
-            ok: true,
-            headers: new Map([['content-type', 'image/jpeg']]) as any,
-            arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-          });
-        }, 10);
-      });
-    }));
-
-    const urls = Array.from({ length: 6 }, (_, i) => `https://example.com/${i}.jpg`);
-    const results = await downloadImagesWithConcurrency(urls, 2);
-
-    expect(maxConcurrent).toBeLessThanOrEqual(2);
-    expect(results).toHaveLength(6);
-
-    // Cleanup
-    for (const r of results) {
-      try { unlinkSync(r.path); } catch { /* ignore */ }
-    }
-  });
-
-  it('should skip failed downloads gracefully', async () => {
-    let callIndex = 0;
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
-      callIndex++;
-      if (callIndex === 2) {
-        return Promise.resolve({ ok: false, status: 500 });
-      }
-      return Promise.resolve({
-        ok: true,
-        headers: new Map([['content-type', 'image/jpeg']]) as any,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-      });
-    }));
-
-    const urls = [
-      'https://example.com/1.jpg',
-      'https://example.com/fail.jpg',
-      'https://example.com/3.jpg',
-    ];
-
-    const log = { warn: vi.fn() };
-    const results = await downloadImagesWithConcurrency(urls, 3, log);
-
-    expect(results).toHaveLength(2);
-    expect(log.warn).toHaveBeenCalled();
-
-    // Cleanup
-    for (const r of results) {
-      try { unlinkSync(r.path); } catch { /* ignore */ }
-    }
-  });
-
-  it('should return empty array for empty input', async () => {
-    const results = await downloadImagesWithConcurrency([], 3);
-    expect(results).toEqual([]);
-  });
-
-  it('should handle all downloads failing', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network down')));
-
-    const log = { warn: vi.fn() };
-    const results = await downloadImagesWithConcurrency(
-      ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
-      3,
-      log,
-    );
-
-    expect(results).toEqual([]);
-    expect(log.warn).toHaveBeenCalledTimes(2);
-  });
-});
-
 // ── handleInboundMessage — InboundHistory integration ───────────────
 
 describe('handleInboundMessage — InboundHistory', () => {
@@ -438,6 +224,24 @@ describe('handleInboundMessage — InboundHistory', () => {
         text: {
           resolveTextChunkLimit: vi.fn().mockReturnValue(4000),
           chunkText: vi.fn().mockImplementation((t: string) => [t]),
+        },
+        media: {
+          fetchRemoteMedia: vi.fn().mockResolvedValue({
+            buffer: Buffer.from('fake-image'),
+            contentType: 'image/jpeg',
+          }),
+          saveMediaBuffer: vi.fn().mockResolvedValue({
+            id: 'media-1',
+            path: '/tmp/openclaw/media/inbound/test.jpg',
+            size: 10,
+            contentType: 'image/jpeg',
+          }),
+        },
+        commands: {
+          resolveCommandAuthorizedFromAuthorizers: vi.fn().mockImplementation(
+            (params: { authorizers: Array<{ allowed: boolean }> }) =>
+              params.authorizers.some((a) => a.allowed),
+          ),
         },
       },
     } as any;

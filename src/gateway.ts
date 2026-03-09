@@ -21,8 +21,7 @@ import {
   buildTarget,
 } from "./onebot/message.js";
 
-/** Max concurrent image downloads. */
-const IMAGE_DOWNLOAD_CONCURRENCY = 3;
+
 
 /**
  * Parse a history message's segments into a text summary.
@@ -67,54 +66,32 @@ export function parseHistoryMessageSegments(
 }
 
 /**
- * Download an image URL to a temp file. Returns the local path or null on failure.
+ * Download inbound images using the SDK media pipeline.
+ * Processes URLs sequentially (SDK's saveMediaBuffer is sync I/O).
  */
-export async function downloadImageToTmp(
-  url: string,
-  log?: { warn: (msg: string) => void },
-): Promise<string | null> {
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const contentType = resp.headers.get("content-type") || "image/jpeg";
-    const ext = contentType.includes("png") ? ".png"
-      : contentType.includes("gif") ? ".gif"
-      : ".jpg";
-    const tmpPath = `/tmp/qq_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
-    const buffer = Buffer.from(await resp.arrayBuffer());
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(tmpPath, buffer);
-    return tmpPath;
-  } catch (err) {
-    log?.warn(`Failed to download QQ image: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-}
-
-/**
- * Download multiple image URLs concurrently with a concurrency limit.
- * Returns an array of { url, path } for successfully downloaded images.
- */
-export async function downloadImagesWithConcurrency(
+async function downloadInboundImages(
   urls: string[],
-  concurrency: number,
+  runtime: PluginRuntime,
   log?: { warn: (msg: string) => void },
-): Promise<Array<{ url: string; path: string }>> {
-  const results: Array<{ url: string; path: string }> = [];
-  const queue = [...urls];
-  const workers: Promise<void>[] = [];
-
-  for (let i = 0; i < Math.min(concurrency, queue.length); i++) {
-    workers.push((async () => {
-      while (queue.length > 0) {
-        const url = queue.shift()!;
-        const path = await downloadImageToTmp(url, log);
-        if (path) results.push({ url, path });
-      }
-    })());
+): Promise<Array<{ url: string; path: string; contentType?: string }>> {
+  const results: Array<{ url: string; path: string; contentType?: string }> = [];
+  for (const url of urls) {
+    try {
+      const fetched = await runtime.channel.media.fetchRemoteMedia({
+        url,
+        filePathHint: url,
+        maxBytes: 20 * 1024 * 1024, // 20MB limit
+      });
+      const saved = await runtime.channel.media.saveMediaBuffer(
+        fetched.buffer,
+        fetched.contentType,
+        "inbound",
+      );
+      results.push({ url, path: saved.path, contentType: saved.contentType });
+    } catch (err) {
+      log?.warn(`Failed to download QQ image: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
-
-  await Promise.all(workers);
   return results;
 }
 
@@ -358,7 +335,15 @@ export async function handleInboundMessage(
   });
 
   // ── Check command authorization ─────────────────────────────────
-  const commandAuthorized = account.allowFrom.includes(senderId);
+  const commandAuthorized = runtime.channel.commands.resolveCommandAuthorizedFromAuthorizers({
+    useAccessGroups: false,
+    authorizers: [
+      {
+        configured: account.allowFrom.length > 0,
+        allowed: account.allowFrom.includes(senderId),
+      },
+    ],
+  });
 
   // ── Build MsgContext ────────────────────────────────────────────
   const msgCtx: Record<string, unknown> = {
@@ -398,17 +383,19 @@ export async function handleInboundMessage(
     msgCtx.MediaType = "image";
     msgCtx.MediaTypes = allImageUrls.map(() => "image");
 
-    // Download images to local temp files so OpenClaw core can inject them
+    // Download images to local files so OpenClaw core can inject them
     // into the LLM context as image blocks (core requires MediaPaths)
-    const downloaded = await downloadImagesWithConcurrency(
+    const downloaded = await downloadInboundImages(
       allImageUrls,
-      IMAGE_DOWNLOAD_CONCURRENCY,
+      runtime,
       log as { warn: (msg: string) => void } | undefined,
     );
     if (downloaded.length > 0) {
       const downloadedPaths = downloaded.map((d) => d.path);
       msgCtx.MediaPath = downloadedPaths[0];
       msgCtx.MediaPaths = downloadedPaths;
+      // Use actual content types from SDK
+      msgCtx.MediaTypes = downloaded.map((d) => d.contentType || "image");
     }
   }
 
