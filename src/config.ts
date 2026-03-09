@@ -18,6 +18,8 @@ export type QQResolvedAccount = {
   thinkingIndicator: boolean;
   /** Number of recent group messages to fetch as context when @mentioned. Default: 20, 0 to disable. */
   groupContextMessages: number;
+  /** Whether group messages require @bot mention to be processed. Default: true */
+  requireMention: boolean;
 };
 
 // ── Raw config shape (channels.qq.<accountId>) ──────────────────────
@@ -33,6 +35,7 @@ type QQAccountRaw = {
   groupAllowFrom?: (string | number)[];
   thinkingIndicator?: boolean;
   groupContextMessages?: number;
+  requireMention?: boolean;
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -79,6 +82,7 @@ export function resolveAccount(
     groupContextMessages: typeof raw.groupContextMessages === "number"
       ? Math.max(0, Math.trunc(raw.groupContextMessages))
       : 20, // default: 20
+    requireMention: raw.requireMention ?? true,
   };
 }
 

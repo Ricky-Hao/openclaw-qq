@@ -18,9 +18,38 @@ import {
   extractImageUrls,
   buildTextSegments,
   buildMediaSegment,
+  buildReplySegment,
   buildTarget,
 } from "./onebot/message.js";
+import type { MessageSegment, MessageTarget } from "./onebot/types.js";
 
+// ── Send with Retry ─────────────────────────────────────────────────
+
+/** @internal Exported for testing. */
+export async function sendWithRetry(
+  client: OneBotClient,
+  target: MessageTarget,
+  segments: MessageSegment[],
+  log?: { warn: (msg: string) => void; error: (msg: string) => void },
+  maxAttempts = 3,
+): Promise<number> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await client.sendMessage(target, segments);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        log?.warn(
+          `Send attempt ${attempt}/${maxAttempts} failed, retrying in ${delayMs}ms: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
+}
 
 
 /**
@@ -252,9 +281,10 @@ export async function handleInboundMessage(
       }
     }
 
-    // Group messages require @bot mention
+    // Group messages require @bot mention (unless requireMention is disabled)
     const mentioned = wasBotMentioned(event.message, account.botQQ);
-    if (!mentioned) return;
+    const requireMention = account.requireMention ?? true;
+    if (requireMention && !mentioned) return;
   }
 
   // ── Extract message content ─────────────────────────────────────
@@ -275,10 +305,16 @@ export async function handleInboundMessage(
 
   // ── Processing indicator (emoji reaction) ────────────────────────
   // React with 🔥 to show the message is being processed
-  client.callApi("set_msg_emoji_like", {
-    message_id: event.message_id,
-    emoji_id: "128293",  // 🔥 processing
-  }).catch((err) => { log?.warn(`Failed to set processing emoji: ${err instanceof Error ? err.message : String(err)}`); });
+  let processingEmojiSet = false;
+  try {
+    await client.callApi("set_msg_emoji_like", {
+      message_id: event.message_id,
+      emoji_id: "128293",  // 🔥 processing
+    });
+    processingEmojiSet = true;
+  } catch (err) {
+    log?.warn(`Failed to set processing emoji: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // ── Fetch group context (recent messages before this one) ───────
   let inboundHistory: Array<{ sender: string; body: string; timestamp: number }> | undefined;
@@ -444,16 +480,19 @@ export async function handleInboundMessage(
   });
 
   // ── Done indicator (swap emoji reactions) ───────────────────────
-  // Remove 🔥 processing indicator, then add ✨ done indicator
-  try {
-    await client.callApi("set_msg_emoji_like", {
-      message_id: event.message_id,
-      emoji_id: "128293",
-      set: false,  // remove 🔥
-    });
-  } catch (err) {
-    log?.warn(`Failed to remove processing emoji: ${err instanceof Error ? err.message : String(err)}`);
+  // Remove 🔥 processing indicator only if it was set successfully
+  if (processingEmojiSet) {
+    try {
+      await client.callApi("set_msg_emoji_like", {
+        message_id: event.message_id,
+        emoji_id: "128293",
+        set: false,  // remove 🔥
+      });
+    } catch (err) {
+      log?.warn(`Failed to remove processing emoji: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
+  // ✨ done emoji always attempted (regardless of 🔥 success)
   try {
     await client.callApi("set_msg_emoji_like", {
       message_id: event.message_id,
@@ -481,6 +520,13 @@ async function deliverReply(
     event.group_id,
   );
 
+  // Track whether we've prepended a reply (quote) segment to the first message.
+  // Only used for group chats.
+  let repliedToOriginal = false;
+
+  // Track whether the first media URL has already been sent (merged with text).
+  let firstMediaSent = false;
+
   // Send text (possibly chunked)
   if (payload.text) {
     const textChunkLimit = runtime.channel.text.resolveTextChunkLimit(
@@ -492,21 +538,58 @@ async function deliverReply(
       textChunkLimit,
     );
 
-    for (const chunk of chunks) {
-      try {
-        await client.sendMessage(target, buildTextSegments(chunk));
-      } catch (err) {
-        log?.error(
-          `Failed to send text chunk: ${err instanceof Error ? err.message : String(err)}`,
-        );
+    for (let i = 0; i < chunks.length; i++) {
+      const isLastChunk = i === chunks.length - 1;
+      const segments: MessageSegment[] = buildTextSegments(chunks[i]);
+
+      // Quote-reply: prepend reply segment to the first message (group only)
+      if (isGroup && !repliedToOriginal) {
+        segments.unshift(buildReplySegment(event.message_id));
+        repliedToOriginal = true;
+      }
+
+      // Merge: append first media to the last text chunk
+      if (isLastChunk && payload.mediaUrl) {
+        const mediaSegment = buildMediaSegment(payload.mediaUrl);
+        segments.push(mediaSegment);
+        try {
+          await sendWithRetry(client, target, segments, log);
+          firstMediaSent = true;
+        } catch {
+          // Merge failed — fallback: send text and media separately
+          // Remove the media segment from the end
+          segments.pop();
+          try {
+            await sendWithRetry(client, target, segments, log);
+          } catch (err) {
+            log?.error(
+              `Failed to send text chunk: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          // Media will be sent below in the media section
+        }
+      } else {
+        try {
+          await sendWithRetry(client, target, segments, log);
+        } catch (err) {
+          log?.error(
+            `Failed to send text chunk: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
   }
 
   // Send media (images)
-  if (payload.mediaUrl) {
+  if (payload.mediaUrl && !firstMediaSent) {
+    const segments: MessageSegment[] = [buildMediaSegment(payload.mediaUrl)];
+    // If no text was sent yet, and it's a group, prepend reply segment
+    if (isGroup && !repliedToOriginal) {
+      segments.unshift(buildReplySegment(event.message_id));
+      repliedToOriginal = true;
+    }
     try {
-      await client.sendMessage(target, [buildMediaSegment(payload.mediaUrl!)]);
+      await sendWithRetry(client, target, segments, log);
     } catch (err) {
       log?.error(
         `Failed to send media: ${err instanceof Error ? err.message : String(err)}`,
@@ -517,7 +600,7 @@ async function deliverReply(
     for (const url of payload.mediaUrls) {
       if (url === payload.mediaUrl) continue; // already sent
       try {
-        await client.sendMessage(target, [buildMediaSegment(url)]);
+        await sendWithRetry(client, target, [buildMediaSegment(url)], log);
       } catch (err) {
         log?.error(
           `Failed to send media: ${err instanceof Error ? err.message : String(err)}`,

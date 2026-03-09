@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseHistoryMessageSegments,
   handleInboundMessage,
+  sendWithRetry,
 } from '../src/gateway.js';
 import { existsSync, unlinkSync, readFileSync } from 'node:fs';
 import type { OneBotMessageEvent } from '../src/onebot/types.js';
@@ -153,6 +154,7 @@ describe('handleInboundMessage — InboundHistory', () => {
       groupAllowFrom: ['888888'],
       thinkingIndicator: false,
       groupContextMessages: 5,
+      requireMention: true,
       ...overrides,
     };
   }
@@ -706,5 +708,459 @@ describe('handleInboundMessage — InboundHistory', () => {
 
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
     expect(history[0].timestamp).toBe(1772956830 * 1000); // event.time * 1000
+  });
+});
+
+// ── sendWithRetry ───────────────────────────────────────────────────
+
+describe('sendWithRetry', () => {
+  it('should succeed on first attempt without retrying', async () => {
+    const client = {
+      sendMessage: vi.fn().mockResolvedValue(42),
+    } as any;
+    const target = { type: 'group' as const, groupId: 888 };
+    const segments = [{ type: 'text' as const, data: { text: 'hello' } }];
+
+    const result = await sendWithRetry(client, target, segments);
+    expect(result).toBe(42);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('should retry on failure and succeed on second attempt', async () => {
+    const client = {
+      sendMessage: vi.fn()
+        .mockRejectedValueOnce(new Error('network error'))
+        .mockResolvedValueOnce(99),
+    } as any;
+    const target = { type: 'group' as const, groupId: 888 };
+    const segments = [{ type: 'text' as const, data: { text: 'hello' } }];
+    const mockLog = { warn: vi.fn(), error: vi.fn() };
+
+    const result = await sendWithRetry(client, target, segments, mockLog, 3);
+    expect(result).toBe(99);
+    expect(client.sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Send attempt 1/3 failed'),
+    );
+  });
+
+  it('should throw after all attempts exhausted', async () => {
+    const client = {
+      sendMessage: vi.fn()
+        .mockRejectedValue(new Error('persistent error')),
+    } as any;
+    const target = { type: 'group' as const, groupId: 888 };
+    const segments = [{ type: 'text' as const, data: { text: 'hello' } }];
+    const mockLog = { warn: vi.fn(), error: vi.fn() };
+
+    await expect(
+      sendWithRetry(client, target, segments, mockLog, 2),
+    ).rejects.toThrow('persistent error');
+    expect(client.sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockLog.warn).toHaveBeenCalledTimes(1); // only 1 warn for attempt 1/2
+  });
+
+  it('should work with maxAttempts=1 (no retry)', async () => {
+    const client = {
+      sendMessage: vi.fn().mockRejectedValue(new Error('fail')),
+    } as any;
+    const target = { type: 'private' as const, userId: 123 };
+    const segments = [{ type: 'text' as const, data: { text: 'hi' } }];
+
+    await expect(
+      sendWithRetry(client, target, segments, undefined, 1),
+    ).rejects.toThrow('fail');
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Batch 2: Quote-reply, text+media merge, requireMention, robust indicators ─
+
+describe('handleInboundMessage — Batch 2', () => {
+  function makeAccount(overrides: Partial<QQResolvedAccount> = {}): QQResolvedAccount {
+    return {
+      accountId: 'test-account',
+      enabled: true,
+      wsUrl: 'ws://localhost:3001',
+      token: '',
+      botQQ: '100001',
+      dmPolicy: 'open',
+      allowFrom: ['100000001'],
+      groupPolicy: 'open',
+      groupAllowFrom: ['888888'],
+      thinkingIndicator: false,
+      groupContextMessages: 0,
+      requireMention: true,
+      ...overrides,
+    };
+  }
+
+  function makeGroupEvent(overrides: Partial<OneBotMessageEvent> = {}): OneBotMessageEvent {
+    return {
+      post_type: 'message',
+      message_type: 'group',
+      sub_type: 'normal',
+      message_id: 9999,
+      user_id: 100000001,
+      group_id: 888888,
+      message: [
+        { type: 'at', data: { qq: '100001' } },
+        { type: 'text', data: { text: ' 你好' } },
+      ],
+      raw_message: '@bot 你好',
+      font: 0,
+      sender: { user_id: 100000001, nickname: 'TestUser', card: 'Ricky' },
+      time: 1772956830,
+      self_id: 100001,
+      ...overrides,
+    };
+  }
+
+  function makeDmEvent(overrides: Partial<OneBotMessageEvent> = {}): OneBotMessageEvent {
+    return {
+      post_type: 'message',
+      message_type: 'private',
+      sub_type: 'friend',
+      message_id: 8888,
+      user_id: 100000001,
+      message: [
+        { type: 'text', data: { text: '你好' } },
+      ],
+      raw_message: '你好',
+      font: 0,
+      sender: { user_id: 100000001, nickname: 'TestUser' },
+      time: 1772956830,
+      self_id: 100001,
+      ...overrides,
+    };
+  }
+
+  /** Capture sendMessage calls to verify segments. */
+  let sendCalls: Array<{ target: any; segments: any[] }>;
+  /** Capture dispatchReplyWithBufferedBlockDispatcher deliver function. */
+  let capturedDeliver: ((payload: any) => Promise<void>) | null;
+
+  function makeRuntime() {
+    capturedDeliver = null;
+    return {
+      channel: {
+        routing: {
+          resolveAgentRoute: vi.fn().mockReturnValue({
+            agentId: 'agent-1',
+            sessionKey: 'sess-1',
+          }),
+        },
+        reply: {
+          finalizeInboundContext: vi.fn().mockImplementation((ctx: Record<string, unknown>) => ctx),
+          dispatchReplyWithBufferedBlockDispatcher: vi.fn().mockImplementation(
+            async (params: { dispatcherOptions: { deliver: (payload: any) => Promise<void> } }) => {
+              capturedDeliver = params.dispatcherOptions.deliver;
+            },
+          ),
+        },
+        session: {
+          resolveStorePath: vi.fn().mockReturnValue('/tmp/store'),
+          recordInboundSession: vi.fn().mockResolvedValue(undefined),
+        },
+        text: {
+          resolveTextChunkLimit: vi.fn().mockReturnValue(4000),
+          chunkText: vi.fn().mockImplementation((t: string) => [t]),
+        },
+        media: {
+          fetchRemoteMedia: vi.fn().mockResolvedValue({
+            buffer: Buffer.from('fake-image'),
+            contentType: 'image/jpeg',
+          }),
+          saveMediaBuffer: vi.fn().mockResolvedValue({
+            id: 'media-1',
+            path: '/tmp/openclaw/media/inbound/test.jpg',
+            size: 10,
+            contentType: 'image/jpeg',
+          }),
+        },
+        commands: {
+          resolveCommandAuthorizedFromAuthorizers: vi.fn().mockReturnValue(true),
+        },
+      },
+    } as any;
+  }
+
+  function makeClient() {
+    sendCalls = [];
+    return {
+      callApi: vi.fn().mockResolvedValue({}),
+      sendMessage: vi.fn().mockImplementation((target: any, segments: any[]) => {
+        sendCalls.push({ target, segments });
+        return Promise.resolve(sendCalls.length);
+      }),
+    } as any;
+  }
+
+  const cfg = {} as any;
+  const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    sendCalls = [];
+    capturedDeliver = null;
+  });
+
+  // ── Quote-reply: group message should have reply segment ────────
+
+  it('should prepend reply segment to first text message in group chat', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    // capturedDeliver should have been set by the mock
+    expect(capturedDeliver).not.toBeNull();
+
+    // Simulate delivering a text reply
+    await capturedDeliver!({ text: 'Hello back!' });
+
+    expect(sendCalls.length).toBe(1);
+    const firstCall = sendCalls[0];
+    // First segment should be reply
+    expect(firstCall.segments[0]).toEqual({ type: 'reply', data: { id: '9999' } });
+    // Second segment should be text
+    expect(firstCall.segments[1].type).toBe('text');
+    expect(firstCall.segments[1].data.text).toBe('Hello back!');
+  });
+
+  it('should NOT prepend reply segment in DM', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(makeDmEvent(), account, cfg, runtime, client, log);
+
+    expect(capturedDeliver).not.toBeNull();
+    await capturedDeliver!({ text: 'Hello DM!' });
+
+    expect(sendCalls.length).toBe(1);
+    // No reply segment — first segment is text
+    expect(sendCalls[0].segments[0].type).toBe('text');
+    expect(sendCalls[0].segments.every((s: any) => s.type !== 'reply')).toBe(true);
+  });
+
+  it('should prepend reply segment to media-only message in group when no text', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    expect(capturedDeliver).not.toBeNull();
+    await capturedDeliver!({ mediaUrl: 'https://example.com/cat.jpg' });
+
+    expect(sendCalls.length).toBe(1);
+    // Reply segment prepended to the media message
+    expect(sendCalls[0].segments[0]).toEqual({ type: 'reply', data: { id: '9999' } });
+    expect(sendCalls[0].segments[1].type).toBe('image');
+  });
+
+  // ── Text+media merge ────────────────────────────────────────────
+
+  it('should merge last text chunk with first media into one message', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    expect(capturedDeliver).not.toBeNull();
+    await capturedDeliver!({
+      text: 'Here is the image:',
+      mediaUrl: 'https://example.com/cat.jpg',
+    });
+
+    // Should be 1 call: text + media merged (+ reply in group)
+    expect(sendCalls.length).toBe(1);
+    const segments = sendCalls[0].segments;
+    // reply + text + image
+    expect(segments[0].type).toBe('reply');
+    expect(segments[1].type).toBe('text');
+    expect(segments[2].type).toBe('image');
+  });
+
+  it('should fallback to separate sends if merge fails', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    sendCalls = [];
+    const client = {
+      callApi: vi.fn().mockResolvedValue({}),
+      sendMessage: vi.fn().mockImplementation((target: any, segments: any[]) => {
+        // Any call with both text and image segments fails (merge not supported)
+        const hasText = segments.some((s: any) => s.type === 'text');
+        const hasImage = segments.some((s: any) => s.type === 'image');
+        if (hasText && hasImage) {
+          return Promise.reject(new Error('merge not supported'));
+        }
+        sendCalls.push({ target, segments });
+        return Promise.resolve(sendCalls.length);
+      }),
+    } as any;
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    expect(capturedDeliver).not.toBeNull();
+    await capturedDeliver!({
+      text: 'Look at this',
+      mediaUrl: 'https://example.com/cat.jpg',
+    });
+
+    // Merge failed after retries, then fallback: text separately, then media separately
+    expect(sendCalls.length).toBe(2);
+    // First fallback: text (with reply)
+    const textCall = sendCalls[0];
+    expect(textCall.segments.some((s: any) => s.type === 'reply')).toBe(true);
+    expect(textCall.segments.some((s: any) => s.type === 'text')).toBe(true);
+    expect(textCall.segments.every((s: any) => s.type !== 'image')).toBe(true);
+    // Second fallback: media alone
+    const mediaCall = sendCalls[1];
+    expect(mediaCall.segments.some((s: any) => s.type === 'image')).toBe(true);
+  });
+
+  it('should send additional mediaUrls separately', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    expect(capturedDeliver).not.toBeNull();
+    await capturedDeliver!({
+      text: 'Multiple images:',
+      mediaUrl: 'https://example.com/1.jpg',
+      mediaUrls: ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+    });
+
+    // Call 1: merged text + first media (+ reply)
+    // Call 2: second media separately
+    expect(sendCalls.length).toBe(2);
+    expect(sendCalls[0].segments.some((s: any) => s.type === 'text')).toBe(true);
+    expect(sendCalls[0].segments.some((s: any) => s.type === 'image')).toBe(true);
+    // Second image sent separately
+    expect(sendCalls[1].segments.length).toBe(1);
+    expect(sendCalls[1].segments[0].type).toBe('image');
+  });
+
+  // ── requireMention configurable ─────────────────────────────────
+
+  it('should skip group message without @mention when requireMention=true', async () => {
+    const account = makeAccount({ requireMention: true });
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    // No @bot mention
+    const event = makeGroupEvent({
+      message: [
+        { type: 'text', data: { text: '随便聊聊' } },
+      ],
+    });
+
+    await handleInboundMessage(event, account, cfg, runtime, client, log);
+
+    // Should be skipped — no dispatch
+    expect(runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+  });
+
+  it('should process group message without @mention when requireMention=false', async () => {
+    const account = makeAccount({ requireMention: false });
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    // No @bot mention but requireMention=false
+    const event = makeGroupEvent({
+      message: [
+        { type: 'text', data: { text: '随便聊聊' } },
+      ],
+    });
+
+    await handleInboundMessage(event, account, cfg, runtime, client, log);
+
+    // Should proceed to dispatch
+    expect(runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalled();
+  });
+
+  // ── Robust indicators ───────────────────────────────────────────
+
+  it('should not attempt to remove 🔥 if setting it failed', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const callApiCalls: string[] = [];
+    const client = {
+      callApi: vi.fn().mockImplementation((action: string, params: any) => {
+        callApiCalls.push(action);
+        // Fail the processing emoji set
+        if (action === 'set_msg_emoji_like' && params.emoji_id === '128293' && params.set !== false) {
+          return Promise.reject(new Error('emoji API unavailable'));
+        }
+        return Promise.resolve({});
+      }),
+      sendMessage: vi.fn().mockResolvedValue(0),
+    } as any;
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    // 🔥 set was attempted, but failed → should NOT try to remove it
+    // ✨ done should still be attempted
+    const emojiCalls = callApiCalls.filter((a) => a === 'set_msg_emoji_like');
+    // First call: set 🔥 (failed)
+    // Second call: set ✨ done (should always happen)
+    // NO third call for removing 🔥
+    expect(emojiCalls.length).toBe(2);
+
+    // Verify the second emoji call was the done emoji, NOT remove-processing
+    const allCalls = client.callApi.mock.calls;
+    const emojiApiCalls = allCalls.filter((c: any[]) => c[0] === 'set_msg_emoji_like');
+    // First: set 🔥 (failed)
+    expect(emojiApiCalls[0][1].emoji_id).toBe('128293');
+    // Second: set ✨
+    expect(emojiApiCalls[1][1].emoji_id).toBe('10024');
+  });
+
+  it('should remove 🔥 then set ✨ when processing emoji was set successfully', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    // callApi should be called for: set 🔥, remove 🔥, set ✨
+    const emojiCalls = client.callApi.mock.calls.filter(
+      (c: any[]) => c[0] === 'set_msg_emoji_like',
+    );
+    expect(emojiCalls.length).toBe(3);
+    // set 🔥
+    expect(emojiCalls[0][1]).toEqual(expect.objectContaining({ emoji_id: '128293' }));
+    expect(emojiCalls[0][1].set).toBeUndefined(); // set is not passed when adding
+    // remove 🔥
+    expect(emojiCalls[1][1]).toEqual(expect.objectContaining({ emoji_id: '128293', set: false }));
+    // set ✨
+    expect(emojiCalls[2][1]).toEqual(expect.objectContaining({ emoji_id: '10024' }));
+  });
+
+  // ── Quote-reply: only first message gets reply segment ──────────
+
+  it('should only prepend reply segment to the first chunk in multi-chunk text', async () => {
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    // Make chunkText return 2 chunks
+    runtime.channel.text.chunkText = vi.fn().mockReturnValue(['chunk1', 'chunk2']);
+    const client = makeClient();
+
+    await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
+
+    expect(capturedDeliver).not.toBeNull();
+    await capturedDeliver!({ text: 'long text that gets chunked' });
+
+    expect(sendCalls.length).toBe(2);
+    // First chunk has reply
+    expect(sendCalls[0].segments[0].type).toBe('reply');
+    // Second chunk does NOT have reply
+    expect(sendCalls[1].segments.every((s: any) => s.type !== 'reply')).toBe(true);
   });
 });

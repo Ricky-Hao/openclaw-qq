@@ -109,6 +109,13 @@ export function buildTextSegments(text: string): MessageSegment[] {
 }
 
 /**
+ * Build a reply (quote) message segment referencing a previous message.
+ */
+export function buildReplySegment(messageId: number | string): MessageSegment {
+  return { type: "reply", data: { id: String(messageId) } };
+}
+
+/**
  * Build an image message segment.
  */
 export function buildImageSegment(urlOrBase64: string): MessageSegment {

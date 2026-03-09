@@ -11,6 +11,7 @@ import {
   buildImageSegment,
   buildFileSegment,
   buildMediaSegment,
+  buildReplySegment,
   buildTarget,
 } from '../src/onebot/message.js';
 import type { MessageSegment } from '../src/onebot/types.js';
@@ -423,6 +424,23 @@ describe('onebot/message.ts', () => {
         type: 'private',
         userId: 789012,
       });
+    });
+  });
+
+  describe('buildReplySegment', () => {
+    it('should build reply segment with numeric message id', () => {
+      const result = buildReplySegment(12345);
+      expect(result).toEqual({ type: 'reply', data: { id: '12345' } });
+    });
+
+    it('should build reply segment with string message id', () => {
+      const result = buildReplySegment('67890');
+      expect(result).toEqual({ type: 'reply', data: { id: '67890' } });
+    });
+
+    it('should convert numeric id to string', () => {
+      const result = buildReplySegment(0);
+      expect(result.data.id).toBe('0');
     });
   });
 });

@@ -33,6 +33,7 @@ vi.mock('../src/config.js', () => ({
     groupAllowFrom: [],
     thinkingIndicator: false,
     groupContextMessages: 20,
+    requireMention: true,
   })),
   defaultAccountId: vi.fn(() => 'default'),
   isEnabled: vi.fn(() => true),

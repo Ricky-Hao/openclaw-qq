@@ -106,6 +106,7 @@ describe('config.ts', () => {
         groupAllowFrom: ['1001', '1002'],
         thinkingIndicator: true,
         groupContextMessages: 30,
+        requireMention: true,
       });
     });
 
@@ -133,6 +134,7 @@ describe('config.ts', () => {
         groupAllowFrom: [],
         thinkingIndicator: false, // default
         groupContextMessages: 20, // default
+        requireMention: true, // default
       });
     });
 
@@ -286,6 +288,39 @@ describe('config.ts', () => {
         },
       } as unknown as OpenClawConfig;
       expect(resolveAccount(cfg3, 'test').groupContextMessages).toBe(0);
+    });
+
+    it('should default requireMention to true', () => {
+      const cfg = {
+        channels: {
+          qq: {
+            test: { botQQ: '123' },
+          },
+        },
+      } as unknown as OpenClawConfig;
+      expect(resolveAccount(cfg, 'test').requireMention).toBe(true);
+    });
+
+    it('should respect explicit requireMention: false', () => {
+      const cfg = {
+        channels: {
+          qq: {
+            test: { botQQ: '123', requireMention: false },
+          },
+        },
+      } as unknown as OpenClawConfig;
+      expect(resolveAccount(cfg, 'test').requireMention).toBe(false);
+    });
+
+    it('should respect explicit requireMention: true', () => {
+      const cfg = {
+        channels: {
+          qq: {
+            test: { botQQ: '123', requireMention: true },
+          },
+        },
+      } as unknown as OpenClawConfig;
+      expect(resolveAccount(cfg, 'test').requireMention).toBe(true);
     });
   });
 

@@ -100,7 +100,7 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
     reactions: true,
     edit: false,
     unsend: false,
-    reply: false,
+    reply: true,
     effects: false,
     groupManagement: false,
     threads: false,
@@ -515,7 +515,11 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
 
   // ── Groups Adapter ──────────────────────────────────────────────
   groups: {
-    resolveRequireMention: () => true, // Always require @bot in groups
+    resolveRequireMention: (ctx) => {
+      return (ctx as Record<string, unknown>).account
+        ? ((ctx as Record<string, unknown>).account as QQResolvedAccount).requireMention ?? true
+        : true;
+    },
   },
 
   // ── Mentions Adapter ────────────────────────────────────────────
