@@ -332,76 +332,57 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
 
   savePoll(saveCtx, poll);
 
-  // Build result
-  const result: Record<string, unknown> = {
-    success: true,
-    channel,
-    to: target,
-    messageId: messageIdStr,
-    question,
-    options: pollOptions.map((o) => ({ label: o.label, emoji: o.emoji })),
-    reactions: reactResults,
-  };
+  // --- Auto-schedule settlement (logic unchanged) ---
+  let settlementScheduled = false;
+  let settleActionHint: Record<string, unknown> | undefined;
 
-  if (expiresAt) {
-    result.expiresAt = expiresAt;
-    if (durationLabel) {
-      result.duration = durationLabel;
-    }
+  if (expiresAt && durationMs && durationMs > 0) {
+    try {
+      // Access agent-cron's addJob via globalThis Symbol (cross-plugin communication)
+      // Same pattern as openclaw core's Symbol.for("openclaw.pluginRegistryState")
+      type AddJobFn = (params: {
+        name: string;
+        ownerAgentId: string;
+        schedule: { kind: "at"; at: string };
+        payload: { kind: "agentTurn"; message: string; timeoutSeconds?: number };
+        delivery: { mode: "announce"; channel: string; to: string };
+      }) => Promise<{ ok: boolean; jobId?: string; error?: string }>;
 
-    // Try to auto-schedule settlement via agent-cron programmatic API
-    let settlementScheduled = false;
-    if (durationMs && durationMs > 0) {
-      try {
-        // Access agent-cron's addJob via globalThis Symbol (cross-plugin communication)
-        // Same pattern as openclaw core's Symbol.for("openclaw.pluginRegistryState")
-        type AddJobFn = (params: {
-          name: string;
-          ownerAgentId: string;
-          schedule: { kind: "at"; at: string };
-          payload: { kind: "agentTurn"; message: string; timeoutSeconds?: number };
-          delivery: { mode: "announce"; channel: string; to: string };
-        }) => Promise<{ ok: boolean; jobId?: string; error?: string }>;
+      const addJob = (globalThis as Record<symbol, unknown>)[
+        Symbol.for("openclaw.agentCron.addJob")
+      ] as AddJobFn | undefined;
+      if (typeof addJob !== "function") throw new Error("agent-cron addJob not available on globalThis");
 
-        const addJob = (globalThis as Record<symbol, unknown>)[
-          Symbol.for("openclaw.agentCron.addJob")
-        ] as AddJobFn | undefined;
-        if (typeof addJob !== "function") throw new Error("agent-cron addJob not available on globalThis");
-
-        const cronResult = await addJob({
-          name: `poll-settle-${messageIdStr}`,
-          ownerAgentId: agentId || "main",
-          schedule: {
-            kind: "at",
-            at: expiresAt,
-          },
-          payload: {
-            kind: "agentTurn",
-            message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}") 查询结果，然后把 formattedText 发到群 ${target}。`,
-            timeoutSeconds: 120,
-          },
-          delivery: {
-            mode: "announce",
-            channel,
-            to: target,
-          },
-        });
-        if (cronResult.ok && cronResult.jobId) {
-          settlementScheduled = true;
-          poll.cronJobId = cronResult.jobId;
-          savePoll(saveCtx, poll);
-        }
-      } catch {
-        // agent-cron plugin not available — fall back to settleAction hint
+      const cronResult = await addJob({
+        name: `poll-settle-${messageIdStr}`,
+        ownerAgentId: agentId || "main",
+        schedule: {
+          kind: "at",
+          at: expiresAt,
+        },
+        payload: {
+          kind: "agentTurn",
+          message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}") 查询结果，然后把 formattedText 发到群 ${target}。`,
+          timeoutSeconds: 120,
+        },
+        delivery: {
+          mode: "announce",
+          channel,
+          to: target,
+        },
+      });
+      if (cronResult.ok && cronResult.jobId) {
+        settlementScheduled = true;
+        poll.cronJobId = cronResult.jobId;
+        savePoll(saveCtx, poll);
       }
+    } catch {
+      // agent-cron plugin not available — fall back to settleAction hint
     }
 
-    if (settlementScheduled) {
-      result.settlementScheduled = true;
-      result.cronJobId = poll.cronJobId;
-    } else {
+    if (!settlementScheduled) {
       // Fallback: return settleAction hint for bot to handle manually
-      result.settleAction = {
+      settleActionHint = {
         instruction: "请立即调用 agent_cron_add 创建定时结算任务",
         agent_cron_add_params: {
           name: `poll-settle-${messageIdStr}`,
@@ -418,6 +399,17 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
         },
       };
     }
+  }
+
+  // Build result — keep it minimal to prevent LLM from over-interpreting and re-calling
+  const result: Record<string, unknown> = {
+    success: true,
+    messageId: messageIdStr,
+  };
+  if (settlementScheduled) {
+    result.settlementScheduled = true;
+  } else if (settleActionHint) {
+    result.settleAction = settleActionHint;
   }
 
   return ok(result);

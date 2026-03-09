@@ -83,10 +83,16 @@ describe('poll_create: auto-settlement via globalThis addJob', () => {
     const data = JSON.parse((result.content[0] as { text: string }).text);
 
     expect(data.success).toBe(true);
+    expect(data.messageId).toBeDefined();
     expect(data.settlementScheduled).toBe(true);
-    expect(data.cronJobId).toBe('cron-job-abc');
     // Should NOT have settleAction when scheduled successfully
     expect(data.settleAction).toBeUndefined();
+    // Minimal result: no verbose fields
+    expect(data.cronJobId).toBeUndefined();
+    expect(data.channel).toBeUndefined();
+    expect(data.question).toBeUndefined();
+    expect(data.options).toBeUndefined();
+    expect(data.reactions).toBeUndefined();
 
     // Verify addJob was called with correct params
     expect(mockAddJob).toHaveBeenCalledTimes(1);
