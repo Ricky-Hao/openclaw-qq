@@ -22,6 +22,16 @@ import {
   buildTarget,
 } from "./onebot/message.js";
 import type { MessageSegment, MessageTarget } from "./onebot/types.js";
+import { RateLimiter } from "./rate-limiter.js";
+
+// ── Module-level rate limiter ───────────────────────────────────────
+
+const rateLimiter = new RateLimiter();
+
+/** @internal Exposed for testing only. */
+export function _getRateLimiter(): RateLimiter {
+  return rateLimiter;
+}
 
 // ── Send with Retry ─────────────────────────────────────────────────
 
@@ -32,7 +42,13 @@ export async function sendWithRetry(
   segments: MessageSegment[],
   log?: { warn: (msg: string) => void; error: (msg: string) => void },
   maxAttempts = 3,
+  targetKey?: string,
 ): Promise<number> {
+  // Rate-limit if a targetKey was provided
+  if (targetKey) {
+    await rateLimiter.acquire(targetKey);
+  }
+
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -519,6 +535,9 @@ async function deliverReply(
     event.user_id,
     event.group_id,
   );
+  const targetKey = isGroup
+    ? `group:${event.group_id}`
+    : `user:${event.user_id}`;
 
   // Track whether we've prepended a reply (quote) segment to the first message.
   // Only used for group chats.
@@ -553,14 +572,14 @@ async function deliverReply(
         const mediaSegment = buildMediaSegment(payload.mediaUrl);
         segments.push(mediaSegment);
         try {
-          await sendWithRetry(client, target, segments, log);
+          await sendWithRetry(client, target, segments, log, 3, targetKey);
           firstMediaSent = true;
         } catch {
           // Merge failed — fallback: send text and media separately
           // Remove the media segment from the end
           segments.pop();
           try {
-            await sendWithRetry(client, target, segments, log);
+            await sendWithRetry(client, target, segments, log, 3, targetKey);
           } catch (err) {
             log?.error(
               `Failed to send text chunk: ${err instanceof Error ? err.message : String(err)}`,
@@ -570,7 +589,7 @@ async function deliverReply(
         }
       } else {
         try {
-          await sendWithRetry(client, target, segments, log);
+          await sendWithRetry(client, target, segments, log, 3, targetKey);
         } catch (err) {
           log?.error(
             `Failed to send text chunk: ${err instanceof Error ? err.message : String(err)}`,
@@ -589,7 +608,7 @@ async function deliverReply(
       repliedToOriginal = true;
     }
     try {
-      await sendWithRetry(client, target, segments, log);
+      await sendWithRetry(client, target, segments, log, 3, targetKey);
     } catch (err) {
       log?.error(
         `Failed to send media: ${err instanceof Error ? err.message : String(err)}`,
@@ -600,7 +619,7 @@ async function deliverReply(
     for (const url of payload.mediaUrls) {
       if (url === payload.mediaUrl) continue; // already sent
       try {
-        await sendWithRetry(client, target, [buildMediaSegment(url)], log);
+        await sendWithRetry(client, target, [buildMediaSegment(url)], log, 3, targetKey);
       } catch (err) {
         log?.error(
           `Failed to send media: ${err instanceof Error ? err.message : String(err)}`,

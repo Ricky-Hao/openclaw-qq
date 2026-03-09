@@ -5,6 +5,7 @@ import type {
   ChannelAccountSnapshot,
   ChannelMessageActionContext,
   ChannelOutboundContext,
+  ChannelStatusIssue,
   OpenClawConfig,
   PluginRuntime,
   ReplyPayload,
@@ -560,6 +561,160 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
       if (!params.configured) return "not configured";
       if (!params.enabled) return "disabled";
       return "enabled";
+    },
+
+    probeAccount: async (params) => {
+      const { account } = params;
+      const client = getActiveClient(account.accountId);
+      if (!client) {
+        return { ok: false, error: "No active WebSocket connection" };
+      }
+      try {
+        const info = await client.callApi("get_login_info", {}, {
+          maxRetries: 0,
+          retryDelayMs: 0,
+        }) as { user_id?: number; nickname?: string };
+        return {
+          ok: true,
+          botQQ: String(info.user_id ?? ""),
+          nickname: info.nickname ?? "",
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+
+    collectStatusIssues: (accounts) => {
+      const issues: ChannelStatusIssue[] = [];
+      for (const snap of accounts) {
+        if (!snap.connected) {
+          issues.push({
+            channel: "qq",
+            accountId: snap.accountId ?? "unknown",
+            kind: "runtime",
+            message: "WebSocket not connected to NapCat",
+            fix: "Check NapCat container is running and wsUrl is correct",
+          });
+        }
+        if (snap.connected && !snap.running) {
+          issues.push({
+            channel: "qq",
+            accountId: snap.accountId ?? "unknown",
+            kind: "runtime",
+            message: "Connected but not running (gateway may be initializing)",
+          });
+        }
+      }
+      return issues;
+    },
+  },
+
+  // ── Directory Adapter ───────────────────────────────────────────
+  directory: {
+    self: async (params) => {
+      const client = getActiveClient(params.accountId ?? "default");
+      if (!client) return null;
+      try {
+        const info = await client.callApi("get_login_info") as {
+          user_id?: number;
+          nickname?: string;
+        };
+        return {
+          kind: "user" as const,
+          id: String(info.user_id ?? ""),
+          name: info.nickname ?? undefined,
+        };
+      } catch {
+        return null;
+      }
+    },
+
+    listPeers: async (params) => {
+      const client = getActiveClient(params.accountId ?? "default");
+      if (!client) return [];
+      try {
+        const friends = await client.callApi("get_friend_list") as Array<{
+          user_id: number;
+          nickname: string;
+          remark?: string;
+        }>;
+        let results = friends.map((f) => ({
+          kind: "user" as const,
+          id: String(f.user_id),
+          name: f.remark || f.nickname,
+          handle: f.nickname,
+        }));
+        if (params.query) {
+          const q = params.query.toLowerCase();
+          results = results.filter(
+            (r) =>
+              r.id.includes(q) ||
+              r.name?.toLowerCase().includes(q) ||
+              r.handle?.toLowerCase().includes(q),
+          );
+        }
+        if (params.limit) results = results.slice(0, params.limit);
+        return results;
+      } catch {
+        return [];
+      }
+    },
+
+    listGroups: async (params) => {
+      const client = getActiveClient(params.accountId ?? "default");
+      if (!client) return [];
+      try {
+        const groups = await client.callApi("get_group_list") as Array<{
+          group_id: number;
+          group_name: string;
+          member_count?: number;
+        }>;
+        let results = groups.map((g) => ({
+          kind: "group" as const,
+          id: String(g.group_id),
+          name: g.group_name,
+        }));
+        if (params.query) {
+          const q = params.query.toLowerCase();
+          results = results.filter(
+            (r) =>
+              r.id.includes(q) || r.name?.toLowerCase().includes(q),
+          );
+        }
+        if (params.limit) results = results.slice(0, params.limit);
+        return results;
+      } catch {
+        return [];
+      }
+    },
+
+    listGroupMembers: async (params) => {
+      const client = getActiveClient(params.accountId ?? "default");
+      if (!client) return [];
+      try {
+        const members = await client.callApi("get_group_member_list", {
+          group_id: Number(params.groupId),
+        }) as Array<{
+          user_id: number;
+          nickname: string;
+          card?: string;
+          role?: string;
+        }>;
+        let results = members.map((m) => ({
+          kind: "user" as const,
+          id: String(m.user_id),
+          name: m.card || m.nickname,
+          handle: m.nickname,
+          raw: { role: m.role },
+        }));
+        if (params.limit) results = results.slice(0, params.limit);
+        return results;
+      } catch {
+        return [];
+      }
     },
   },
 };
