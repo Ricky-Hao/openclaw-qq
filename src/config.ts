@@ -1,6 +1,21 @@
 // Config adapter — resolves QQ channel accounts from OpenClaw config
 
+import { z } from "zod";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
+
+// ── Zod Schema ──────────────────────────────────────────────────────
+
+export const qqAccountSchema = z.object({
+  enabled: z.boolean().optional().default(true),
+  wsUrl: z.string().describe("NapCat OneBot WebSocket URL"),
+  token: z.string().optional().describe("OneBot access token"),
+  botQQ: z.string().describe("Bot QQ number"),
+  dmPolicy: z.enum(["allowlist", "open", "disabled"]).optional().default("allowlist"),
+  allowFrom: z.array(z.union([z.string(), z.number()])).optional().default([]),
+  groupPolicy: z.enum(["allowlist", "open", "disabled"]).optional().default("allowlist"),
+  groupAllowFrom: z.array(z.union([z.string(), z.number()])).optional().default([]),
+  requireMention: z.boolean().optional().default(true),
+});
 
 // ── Resolved Account ────────────────────────────────────────────────
 

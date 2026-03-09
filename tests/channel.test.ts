@@ -1,11 +1,13 @@
 /**
- * Tests for channel.ts action interception:
+ * Tests for channel.ts adapters:
  * - poll action → isError (use poll_create instead)
  * - send action with pollQuestion → isError (use poll_create instead)
  * - capabilities.polls = false
+ * - configSchema, setup, resolver, streaming, agentPrompt
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { getActiveClient } from '../src/gateway.js';
 import { qqChannelPlugin } from '../src/channel.js';
 
 // Mock dependencies needed by channel.ts
@@ -19,26 +21,30 @@ vi.mock('../src/gateway.js', () => ({
   stopAccount: vi.fn(),
 }));
 
-vi.mock('../src/config.js', () => ({
-  listAccountIds: vi.fn(() => ['default']),
-  resolveAccount: vi.fn(() => ({
-    accountId: 'default',
-    enabled: true,
-    wsUrl: 'ws://localhost:3001',
-    token: '',
-    botQQ: '10001',
-    dmPolicy: 'allowlist',
-    allowFrom: [],
-    groupPolicy: 'allowlist',
-    groupAllowFrom: [],
-    thinkingIndicator: false,
-    groupContextMessages: 20,
-    requireMention: true,
-  })),
-  defaultAccountId: vi.fn(() => 'default'),
-  isEnabled: vi.fn(() => true),
-  isConfigured: vi.fn(() => true),
-}));
+vi.mock('../src/config.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    listAccountIds: vi.fn(() => ['default']),
+    resolveAccount: vi.fn(() => ({
+      accountId: 'default',
+      enabled: true,
+      wsUrl: 'ws://localhost:3001',
+      token: '',
+      botQQ: '10001',
+      dmPolicy: 'allowlist',
+      allowFrom: [],
+      groupPolicy: 'allowlist',
+      groupAllowFrom: [],
+      thinkingIndicator: false,
+      groupContextMessages: 20,
+      requireMention: true,
+    })),
+    defaultAccountId: vi.fn(() => 'default'),
+    isEnabled: vi.fn(() => true),
+    isConfigured: vi.fn(() => true),
+  };
+});
 
 vi.mock('../src/poll.js', () => ({
   handlePollAction: vi.fn(),
@@ -131,5 +137,178 @@ describe('channel.ts action interception', () => {
     const text = (result as any).content[0].text;
     const data = JSON.parse(text);
     expect(data.channel).toBe('qq');
+  });
+});
+
+// ── configSchema ────────────────────────────────────────────────────
+
+describe('channel.ts configSchema', () => {
+  it('exists and has a schema field', () => {
+    expect(qqChannelPlugin.configSchema).toBeDefined();
+    expect(qqChannelPlugin.configSchema!.schema).toBeDefined();
+  });
+
+  it('schema is a JSON Schema object', () => {
+    const schema = qqChannelPlugin.configSchema!.schema as Record<string, unknown>;
+    expect(schema.type).toBe('object');
+  });
+});
+
+// ── setup ───────────────────────────────────────────────────────────
+
+describe('channel.ts setup', () => {
+  it('applyAccountConfig sets wsUrl from input.url', () => {
+    const cfg = {} as any;
+    const result = qqChannelPlugin.setup!.applyAccountConfig({
+      cfg,
+      accountId: 'default',
+      input: { url: 'ws://myhost:3001', token: 'mytoken' } as any,
+    });
+
+    const qq = (result as any).channels.qq;
+    expect(qq.default.wsUrl).toBe('ws://myhost:3001');
+    expect(qq.default.token).toBe('mytoken');
+  });
+
+  it('applyAccountConfig merges with existing account config', () => {
+    const cfg = {
+      channels: {
+        qq: {
+          default: { botQQ: '12345', wsUrl: 'ws://old:3001' },
+        },
+      },
+    } as any;
+    const result = qqChannelPlugin.setup!.applyAccountConfig({
+      cfg,
+      accountId: 'default',
+      input: { url: 'ws://new:3001' } as any,
+    });
+
+    const acct = (result as any).channels.qq.default;
+    expect(acct.wsUrl).toBe('ws://new:3001');
+    expect(acct.botQQ).toBe('12345'); // preserved
+  });
+});
+
+// ── resolver ────────────────────────────────────────────────────────
+
+describe('channel.ts resolver', () => {
+  const resolveTargets = qqChannelPlugin.resolver!.resolveTargets;
+
+  beforeEach(() => {
+    vi.mocked(getActiveClient).mockReturnValue({
+      connected: true,
+      sendMessage: vi.fn().mockResolvedValue(99999),
+      callApi: vi.fn().mockImplementation((api: string) => {
+        if (api === 'get_group_list') {
+          return Promise.resolve([
+            { group_id: 111222, group_name: '测试群' },
+            { group_id: 333444, group_name: 'Dev Team' },
+          ]);
+        }
+        if (api === 'get_friend_list') {
+          return Promise.resolve([
+            { user_id: 10001, nickname: 'Alice', remark: '爱丽丝' },
+            { user_id: 20002, nickname: 'Bob' },
+          ]);
+        }
+        return Promise.resolve({});
+      }),
+    } as any);
+  });
+
+  it('resolves group by ID', async () => {
+    const results = await resolveTargets({
+      cfg: {} as any,
+      inputs: ['111222'],
+      kind: 'group',
+      runtime: {} as any,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].resolved).toBe(true);
+    expect(results[0].id).toBe('111222');
+    expect(results[0].name).toBe('测试群');
+  });
+
+  it('resolves group by name (case-insensitive)', async () => {
+    const results = await resolveTargets({
+      cfg: {} as any,
+      inputs: ['dev team'],
+      kind: 'group',
+      runtime: {} as any,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].resolved).toBe(true);
+    expect(results[0].id).toBe('333444');
+    expect(results[0].name).toBe('Dev Team');
+  });
+
+  it('resolves user by ID', async () => {
+    const results = await resolveTargets({
+      cfg: {} as any,
+      inputs: ['10001'],
+      kind: 'user',
+      runtime: {} as any,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].resolved).toBe(true);
+    expect(results[0].id).toBe('10001');
+    expect(results[0].name).toBe('爱丽丝'); // remark preferred
+  });
+
+  it('returns resolved: false for no match', async () => {
+    const results = await resolveTargets({
+      cfg: {} as any,
+      inputs: ['nonexistent'],
+      kind: 'user',
+      runtime: {} as any,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].resolved).toBe(false);
+  });
+
+  it('returns note when no active client', async () => {
+    vi.mocked(getActiveClient).mockReturnValue(null as any);
+
+    const results = await resolveTargets({
+      cfg: {} as any,
+      inputs: ['test'],
+      kind: 'group',
+      runtime: {} as any,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].resolved).toBe(false);
+    expect(results[0].note).toBe('No active client');
+  });
+});
+
+// ── streaming ───────────────────────────────────────────────────────
+
+describe('channel.ts streaming', () => {
+  it('has blockStreamingCoalesceDefaults with correct values', () => {
+    expect(qqChannelPlugin.streaming).toBeDefined();
+    const defaults = qqChannelPlugin.streaming!.blockStreamingCoalesceDefaults;
+    expect(defaults).toBeDefined();
+    expect(defaults!.minChars).toBe(100);
+    expect(defaults!.idleMs).toBe(2000);
+  });
+});
+
+// ── agentPrompt ─────────────────────────────────────────────────────
+
+describe('channel.ts agentPrompt', () => {
+  it('messageToolHints returns a non-empty array of strings', () => {
+    expect(qqChannelPlugin.agentPrompt).toBeDefined();
+    const hints = qqChannelPlugin.agentPrompt!.messageToolHints!({} as any);
+    expect(Array.isArray(hints)).toBe(true);
+    expect(hints.length).toBeGreaterThan(0);
+    for (const h of hints) {
+      expect(typeof h).toBe('string');
+    }
   });
 });

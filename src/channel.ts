@@ -5,11 +5,13 @@ import type {
   ChannelAccountSnapshot,
   ChannelMessageActionContext,
   ChannelOutboundContext,
+  ChannelResolveResult,
   ChannelStatusIssue,
   OpenClawConfig,
   PluginRuntime,
   ReplyPayload,
 } from "openclaw/plugin-sdk";
+import { buildChannelConfigSchema } from "openclaw/plugin-sdk";
 import type { QQResolvedAccount } from "./config.js";
 import {
   listAccountIds,
@@ -17,6 +19,7 @@ import {
   defaultAccountId,
   isEnabled,
   isConfigured,
+  qqAccountSchema,
 } from "./config.js";
 import {
   startAccount,
@@ -106,6 +109,9 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
     groupManagement: false,
     threads: false,
   },
+
+  // ── Config Schema ───────────────────────────────────────────────
+  configSchema: buildChannelConfigSchema(qqAccountSchema),
 
   // ── Config Adapter ──────────────────────────────────────────────
   config: {
@@ -716,6 +722,84 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
         return [];
       }
     },
+  },
+
+  // ── Resolver Adapter ────────────────────────────────────────────
+  resolver: {
+    resolveTargets: async (params) => {
+      const { inputs, kind } = params;
+      const client = getActiveClient(params.accountId ?? "default");
+      if (!client) {
+        return inputs.map((input) => ({ input, resolved: false, note: "No active client" }));
+      }
+
+      const results: ChannelResolveResult[] = [];
+
+      if (kind === "group") {
+        let groups: Array<{ group_id: number; group_name: string }> = [];
+        try {
+          groups = await client.callApi("get_group_list") as typeof groups;
+        } catch { /* empty */ }
+
+        for (const input of inputs) {
+          // Try exact ID match first
+          const byId = groups.find((g) => String(g.group_id) === input);
+          if (byId) {
+            results.push({ input, resolved: true, id: String(byId.group_id), name: byId.group_name });
+            continue;
+          }
+          // Try name match
+          const byName = groups.find((g) => g.group_name.toLowerCase().includes(input.toLowerCase()));
+          if (byName) {
+            results.push({ input, resolved: true, id: String(byName.group_id), name: byName.group_name });
+            continue;
+          }
+          results.push({ input, resolved: false });
+        }
+      } else {
+        // kind === "user" — search friends
+        let friends: Array<{ user_id: number; nickname: string; remark?: string }> = [];
+        try {
+          friends = await client.callApi("get_friend_list") as typeof friends;
+        } catch { /* empty */ }
+
+        for (const input of inputs) {
+          const byId = friends.find((f) => String(f.user_id) === input);
+          if (byId) {
+            results.push({ input, resolved: true, id: String(byId.user_id), name: byId.remark || byId.nickname });
+            continue;
+          }
+          const byName = friends.find((f) =>
+            f.nickname.toLowerCase().includes(input.toLowerCase()) ||
+            (f.remark && f.remark.toLowerCase().includes(input.toLowerCase())),
+          );
+          if (byName) {
+            results.push({ input, resolved: true, id: String(byName.user_id), name: byName.remark || byName.nickname });
+            continue;
+          }
+          results.push({ input, resolved: false });
+        }
+      }
+
+      return results;
+    },
+  },
+
+  // ── Streaming Adapter ───────────────────────────────────────────
+  streaming: {
+    blockStreamingCoalesceDefaults: {
+      minChars: 100,
+      idleMs: 2000,
+    },
+  },
+
+  // ── Agent Prompt Adapter ────────────────────────────────────────
+  agentPrompt: {
+    messageToolHints: () => [
+      "QQ does not support Markdown formatting. Use plain text, 【brackets】 for emphasis, and numbered lists.",
+      "QQ messages cannot be edited after sending.",
+      "QQ image URLs expire within ~2 hours.",
+    ],
   },
 };
 

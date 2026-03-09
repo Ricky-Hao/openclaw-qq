@@ -5,6 +5,7 @@ import {
   defaultAccountId,
   isEnabled,
   isConfigured,
+  qqAccountSchema,
 } from '../src/config.js';
 import type { OpenClawConfig } from 'openclaw/plugin-sdk';
 
@@ -366,5 +367,43 @@ describe('config.ts', () => {
       account.botQQ = '';
       expect(isConfigured(account)).toBe(false);
     });
+  });
+});
+
+describe('qqAccountSchema', () => {
+  it('parses a valid full config', () => {
+    const input = {
+      wsUrl: 'ws://localhost:3001',
+      botQQ: '10001',
+      enabled: true,
+      token: 'secret',
+      dmPolicy: 'open',
+      allowFrom: ['111', 222],
+      groupPolicy: 'allowlist',
+      groupAllowFrom: [1001, '1002'],
+      requireMention: false,
+    };
+    const result = qqAccountSchema.parse(input);
+    expect(result.wsUrl).toBe('ws://localhost:3001');
+    expect(result.botQQ).toBe('10001');
+    expect(result.enabled).toBe(true);
+    expect(result.dmPolicy).toBe('open');
+    expect(result.requireMention).toBe(false);
+  });
+
+  it('throws when required fields are missing', () => {
+    expect(() => qqAccountSchema.parse({})).toThrow();
+    expect(() => qqAccountSchema.parse({ wsUrl: 'ws://localhost:3001' })).toThrow(); // missing botQQ
+    expect(() => qqAccountSchema.parse({ botQQ: '10001' })).toThrow(); // missing wsUrl
+  });
+
+  it('fills default values for optional fields', () => {
+    const result = qqAccountSchema.parse({ wsUrl: 'ws://localhost:3001', botQQ: '10001' });
+    expect(result.enabled).toBe(true);
+    expect(result.dmPolicy).toBe('allowlist');
+    expect(result.allowFrom).toEqual([]);
+    expect(result.groupPolicy).toBe('allowlist');
+    expect(result.groupAllowFrom).toEqual([]);
+    expect(result.requireMention).toBe(true);
   });
 });
