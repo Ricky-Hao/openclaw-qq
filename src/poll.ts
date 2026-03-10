@@ -592,11 +592,6 @@ export function createPollResultTool(
         lines.push("");
         lines.push(`共 ${totalVotes} 票`);
 
-        if (poll.creatorQQ && groupId) {
-          const creatorName = await resolveGroupMemberName(client, groupId, poll.creatorQQ);
-          lines.push(`发起人: ${creatorName}`);
-        }
-
         return ok({
           question: poll.question,
           results: results.map((r) => ({
@@ -607,7 +602,6 @@ export function createPollResultTool(
           })),
           totalVotes,
           formattedText: lines.join("\n"),
-          creatorQQ: poll.creatorQQ,
         });
       } catch (e) {
         return err(`查询投票结果失败: ${e instanceof Error ? e.message : String(e)}`);
