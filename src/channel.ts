@@ -146,12 +146,14 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
       const raw = cfg as Record<string, unknown>;
       const channels = (raw.channels ?? {}) as Record<string, unknown>;
       const qq = (channels.qq ?? {}) as Record<string, unknown>;
-      const acct = (qq[accountId] ?? {}) as Record<string, unknown>;
+      const accounts = (qq.accounts ?? {}) as Record<string, unknown>;
+      const acct = (accounts[accountId] ?? {}) as Record<string, unknown>;
 
       if (input.token) acct.token = input.token;
       if (input.url) acct.wsUrl = input.url;
 
-      qq[accountId] = acct;
+      accounts[accountId] = acct;
+      qq.accounts = accounts;
       channels.qq = qq;
       raw.channels = channels;
       return raw as OpenClawConfig;
@@ -304,9 +306,44 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
       return {
         policy: account.dmPolicy,
         allowFrom: account.allowFrom,
-        allowFromPath: `channels.qq.${account.accountId}.allowFrom`,
-        approveHint: `Add their QQ number to channels.qq.${account.accountId}.allowFrom`,
+        allowFromPath: `channels.qq.accounts.${account.accountId}.allowFrom`,
+        approveHint: `Add their QQ number to channels.qq.accounts.${account.accountId}.allowFrom`,
       };
+    },
+
+    collectWarnings: (ctx) => {
+      const account = ctx.account;
+      const warnings: string[] = [];
+
+      if (account.dmPolicy === "open") {
+        warnings.push(
+          `- DM policy is "open" — any QQ user can message the bot directly. ` +
+          `Set channels.qq.accounts.${account.accountId}.dmPolicy to "allowlist" to restrict access.`,
+        );
+      }
+
+      if (account.groupPolicy === "open") {
+        warnings.push(
+          `- Group policy is "open" — the bot will respond in any QQ group. ` +
+          `Set channels.qq.accounts.${account.accountId}.groupPolicy to "allowlist" to restrict access.`,
+        );
+      }
+
+      if (account.dmPolicy === "allowlist" && account.allowFrom.length === 0) {
+        warnings.push(
+          `- DM policy is "allowlist" but allowFrom is empty — no one can DM the bot. ` +
+          `Add QQ numbers to channels.qq.accounts.${account.accountId}.allowFrom.`,
+        );
+      }
+
+      if (account.groupPolicy === "allowlist" && account.groupAllowFrom.length === 0) {
+        warnings.push(
+          `- Group policy is "allowlist" but groupAllowFrom is empty — no group can use the bot. ` +
+          `Add group IDs to channels.qq.accounts.${account.accountId}.groupAllowFrom.`,
+        );
+      }
+
+      return warnings;
     },
   },
 

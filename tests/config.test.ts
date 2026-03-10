@@ -25,8 +25,10 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            default: { botQQ: '123' },
-            account2: { botQQ: '456' },
+            accounts: {
+              default: { botQQ: '123' },
+              account2: { botQQ: '456' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -40,7 +42,9 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            primary: { botQQ: '123' },
+            accounts: {
+              primary: { botQQ: '123' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -53,8 +57,10 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            first: { botQQ: '111' },
-            second: { botQQ: '222' },
+            accounts: {
+              first: { botQQ: '111' },
+              second: { botQQ: '222' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -78,17 +84,19 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            test: {
-              enabled: true,
-              wsUrl: 'ws://localhost:3001',
-              token: 'test-token',
-              botQQ: '123456',
-              dmPolicy: 'open',
-              allowFrom: ['111', '222'],
-              groupPolicy: 'allowlist',
-              groupAllowFrom: ['1001', '1002'],
-              thinkingIndicator: true,
-              groupContextMessages: 30,
+            accounts: {
+              test: {
+                enabled: true,
+                wsUrl: 'ws://localhost:3001',
+                token: 'test-token',
+                botQQ: '123456',
+                dmPolicy: 'open',
+                allowFrom: ['111', '222'],
+                groupPolicy: 'allowlist',
+                groupAllowFrom: ['1001', '1002'],
+                thinkingIndicator: true,
+                groupContextMessages: 30,
+              },
             },
           },
         },
@@ -115,8 +123,10 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            minimal: {
-              botQQ: '123',
+            accounts: {
+              minimal: {
+                botQQ: '123',
+              },
             },
           },
         },
@@ -143,8 +153,10 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            first: { botQQ: '111' },
-            second: { botQQ: '222' },
+            accounts: {
+              first: { botQQ: '111' },
+              second: { botQQ: '222' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -164,9 +176,11 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            disabled: {
-              enabled: false,
-              botQQ: '123',
+            accounts: {
+              disabled: {
+                enabled: false,
+                botQQ: '123',
+              },
             },
           },
         },
@@ -180,7 +194,9 @@ describe('config.ts', () => {
       const cfg1 = {
         channels: {
           qq: {
-            test: { botQQ: '123', dmPolicy: 'open' },
+            accounts: {
+              test: { botQQ: '123', dmPolicy: 'open' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -190,7 +206,9 @@ describe('config.ts', () => {
       const cfg2 = {
         channels: {
           qq: {
-            test: { botQQ: '123', dmPolicy: 'allowlist' },
+            accounts: {
+              test: { botQQ: '123', dmPolicy: 'allowlist' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -200,7 +218,9 @@ describe('config.ts', () => {
       const cfg3 = {
         channels: {
           qq: {
-            test: { botQQ: '123', dmPolicy: 'invalid' },
+            accounts: {
+              test: { botQQ: '123', dmPolicy: 'invalid' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -212,7 +232,9 @@ describe('config.ts', () => {
       const cfg1 = {
         channels: {
           qq: {
-            test: { botQQ: '123', groupPolicy: 'open' },
+            accounts: {
+              test: { botQQ: '123', groupPolicy: 'open' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -222,7 +244,9 @@ describe('config.ts', () => {
       const cfg2 = {
         channels: {
           qq: {
-            test: { botQQ: '123', groupPolicy: 'invalid' },
+            accounts: {
+              test: { botQQ: '123', groupPolicy: 'invalid' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -234,9 +258,11 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            test: {
-              botQQ: '123',
-              allowFrom: [111, 222, '333'],
+            accounts: {
+              test: {
+                botQQ: '123',
+                allowFrom: [111, 222, '333'],
+              },
             },
           },
         },
@@ -250,9 +276,11 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            test: {
-              botQQ: '123',
-              groupAllowFrom: [1001, 1002, '1003'],
+            accounts: {
+              test: {
+                botQQ: '123',
+                groupAllowFrom: [1001, 1002, '1003'],
+              },
             },
           },
         },
@@ -266,7 +294,9 @@ describe('config.ts', () => {
       const cfg1 = {
         channels: {
           qq: {
-            test: { botQQ: '123', groupContextMessages: -5 },
+            accounts: {
+              test: { botQQ: '123', groupContextMessages: -5 },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -275,7 +305,9 @@ describe('config.ts', () => {
       const cfg2 = {
         channels: {
           qq: {
-            test: { botQQ: '123', groupContextMessages: 10.7 },
+            accounts: {
+              test: { botQQ: '123', groupContextMessages: 10.7 },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -284,7 +316,9 @@ describe('config.ts', () => {
       const cfg3 = {
         channels: {
           qq: {
-            test: { botQQ: '123', groupContextMessages: 0 },
+            accounts: {
+              test: { botQQ: '123', groupContextMessages: 0 },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -295,7 +329,9 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            test: { botQQ: '123' },
+            accounts: {
+              test: { botQQ: '123' },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -306,7 +342,9 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            test: { botQQ: '123', requireMention: false },
+            accounts: {
+              test: { botQQ: '123', requireMention: false },
+            },
           },
         },
       } as unknown as OpenClawConfig;
@@ -317,7 +355,9 @@ describe('config.ts', () => {
       const cfg = {
         channels: {
           qq: {
-            test: { botQQ: '123', requireMention: true },
+            accounts: {
+              test: { botQQ: '123', requireMention: true },
+            },
           },
         },
       } as unknown as OpenClawConfig;

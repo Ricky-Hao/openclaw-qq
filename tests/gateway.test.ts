@@ -477,6 +477,8 @@ describe('handleInboundMessage — InboundHistory', () => {
     expect(capturedCtx).not.toBeNull();
     expect(capturedCtx!.Body).toBe('[用户@了你但没有附带任何文字]');
     expect(capturedCtx!.BodyForAgent).toBe('[用户@了你但没有附带任何文字]');
+    // RawBody keeps the original empty extractPlainText output
+    // (but since it was empty and became the placeholder, all three match)
     expect(capturedCtx!.InboundHistory).toEqual([
       { sender: '张三', body: '有人在吗', timestamp: 1772956800000 },
     ]);
@@ -515,9 +517,9 @@ describe('handleInboundMessage — InboundHistory', () => {
     );
   });
 
-  // ── Test 8: BodyForAgent is just rawText (no history prepended) ─
+  // ── Test 8: BodyForAgent uses stripped text, RawBody keeps original ─
 
-  it('should set BodyForAgent to rawText without prepending history', async () => {
+  it('should set BodyForAgent to stripped text and RawBody to original text', async () => {
     const historyMessages = [
       {
         message_id: 9001,
@@ -535,11 +537,55 @@ describe('handleInboundMessage — InboundHistory', () => {
     await handleInboundMessage(makeGroupEvent(), account, cfg, runtime, client, log);
 
     expect(capturedCtx).not.toBeNull();
+    // BodyForAgent should have bot mention stripped
     expect(capturedCtx!.BodyForAgent).toBe('看看猫');
     expect(capturedCtx!.Body).toBe('看看猫');
+    // RawBody keeps original extractPlainText output (no @bot since extractPlainText skips at segments)
+    expect(capturedCtx!.RawBody).toBe('看看猫');
     // Confirm no history delimiters in BodyForAgent
     expect(capturedCtx!.BodyForAgent).not.toContain('[以下是群聊中');
     expect(capturedCtx!.BodyForAgent).not.toContain('[以上是历史消息');
+  });
+
+  // ── Test 8b: RawBody preserves original when stripBotMention changes text ─
+
+  it('should keep RawBody as original extractPlainText when stripBotMention modifies text', async () => {
+    // Simulate a message where extractPlainText returns text with an @mention pattern
+    // (NapCat sometimes puts @nickname in text segments)
+    const event = makeGroupEvent({
+      message: [
+        { type: 'at', data: { qq: '100001' } },
+        { type: 'text', data: { text: '@BotName 请帮忙查一下' } },
+      ],
+    });
+
+    const account = makeAccount();
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(event, account, cfg, runtime, client, log);
+
+    expect(capturedCtx).not.toBeNull();
+    // RawBody keeps the original extractPlainText output (includes @BotName)
+    expect(capturedCtx!.RawBody).toBe('@BotName 请帮忙查一下');
+    // BodyForAgent should have the @mention stripped
+    expect(capturedCtx!.BodyForAgent).toBe('请帮忙查一下');
+    expect(capturedCtx!.Body).toBe('请帮忙查一下');
+  });
+
+  // ── Test 8c: DM BodyForAgent equals RawBody (no stripping) ──────
+
+  it('should set BodyForAgent equal to RawBody for direct messages', async () => {
+    const account = makeAccount({ dmPolicy: 'open' });
+    const runtime = makeRuntime();
+    const client = makeClient();
+
+    await handleInboundMessage(makeDmEvent(), account, cfg, runtime, client, log);
+
+    expect(capturedCtx).not.toBeNull();
+    expect(capturedCtx!.Body).toBe('你好');
+    expect(capturedCtx!.BodyForAgent).toBe('你好');
+    expect(capturedCtx!.RawBody).toBe('你好');
   });
 
   // ── Test 9: History filters out current message_id ──────────────

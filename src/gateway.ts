@@ -304,19 +304,20 @@ export async function handleInboundMessage(
   }
 
   // ── Extract message content ─────────────────────────────────────
-  let rawText = extractPlainText(event.message);
+  const rawText = extractPlainText(event.message);
   const imageUrls = extractImageUrls(event.message);
 
-  // Strip bot mention from the text for group messages
+  // Strip bot mention from the text for group messages (used for BodyForAgent)
+  let bodyForAgent = rawText;
   if (isGroup) {
-    rawText = stripBotMention(rawText, account.botQQ);
+    bodyForAgent = stripBotMention(rawText, account.botQQ);
   }
 
   // Skip empty messages (after stripping) — but allow empty @bot in groups
-  if (!rawText && imageUrls.length === 0) {
+  if (!bodyForAgent && imageUrls.length === 0) {
     if (!isGroup) return; // DM with no content → skip
     // Group empty @bot → treat as a greeting/summon
-    rawText = "[用户@了你但没有附带任何文字]";
+    bodyForAgent = "[用户@了你但没有附带任何文字]";
   }
 
   // ── Processing indicator (emoji reaction) ────────────────────────
@@ -399,10 +400,10 @@ export async function handleInboundMessage(
 
   // ── Build MsgContext ────────────────────────────────────────────
   const msgCtx: Record<string, unknown> = {
-    Body: rawText,
-    BodyForAgent: rawText,
+    Body: bodyForAgent,
+    BodyForAgent: bodyForAgent,
     RawBody: rawText,
-    CommandBody: rawText,
+    CommandBody: bodyForAgent,
     From: from,
     To: to,
     SessionKey: route.sessionKey,

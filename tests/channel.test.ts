@@ -67,7 +67,7 @@ describe('channel.ts action interception', () => {
         pollOption: ['火锅', '烧烤'],
         target: 'qq:group:12345',
       },
-      cfg: { channels: { qq: { default: { botQQ: '10001' } } } },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
       accountId: 'default',
     } as any;
 
@@ -87,7 +87,7 @@ describe('channel.ts action interception', () => {
         pollOption: ['公园', '商场'],
         to: 'qq:group:12345',
       },
-      cfg: { channels: { qq: { default: { botQQ: '10001' } } } },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
       accountId: 'default',
     } as any;
 
@@ -106,7 +106,7 @@ describe('channel.ts action interception', () => {
         pollOption: ['A', 'B', 'C'],
         to: 'qq:group:12345',
       },
-      cfg: { channels: { qq: { default: { botQQ: '10001' } } } },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
       accountId: 'default',
     } as any;
 
@@ -125,7 +125,7 @@ describe('channel.ts action interception', () => {
         message: 'Hello World',
         to: 'qq:group:12345',
       },
-      cfg: { channels: { qq: { default: { botQQ: '10001' } } } },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
       accountId: 'default',
     } as any;
 
@@ -166,15 +166,17 @@ describe('channel.ts setup', () => {
     });
 
     const qq = (result as any).channels.qq;
-    expect(qq.default.wsUrl).toBe('ws://myhost:3001');
-    expect(qq.default.token).toBe('mytoken');
+    expect(qq.accounts.default.wsUrl).toBe('ws://myhost:3001');
+    expect(qq.accounts.default.token).toBe('mytoken');
   });
 
   it('applyAccountConfig merges with existing account config', () => {
     const cfg = {
       channels: {
         qq: {
-          default: { botQQ: '12345', wsUrl: 'ws://old:3001' },
+          accounts: {
+            default: { botQQ: '12345', wsUrl: 'ws://old:3001' },
+          },
         },
       },
     } as any;
@@ -184,7 +186,7 @@ describe('channel.ts setup', () => {
       input: { url: 'ws://new:3001' } as any,
     });
 
-    const acct = (result as any).channels.qq.default;
+    const acct = (result as any).channels.qq.accounts.default;
     expect(acct.wsUrl).toBe('ws://new:3001');
     expect(acct.botQQ).toBe('12345'); // preserved
   });
@@ -310,5 +312,97 @@ describe('channel.ts agentPrompt', () => {
     for (const h of hints) {
       expect(typeof h).toBe('string');
     }
+  });
+});
+
+// ── security.collectWarnings ────────────────────────────────────────
+
+describe('channel.ts security.collectWarnings', () => {
+  const collectWarnings = qqChannelPlugin.security!.collectWarnings!;
+
+  function makeCtx(overrides: Partial<{
+    dmPolicy: string;
+    allowFrom: string[];
+    groupPolicy: string;
+    groupAllowFrom: string[];
+    accountId: string;
+  }> = {}) {
+    return {
+      cfg: {} as any,
+      accountId: overrides.accountId ?? 'default',
+      account: {
+        accountId: overrides.accountId ?? 'default',
+        enabled: true,
+        wsUrl: 'ws://localhost:3001',
+        token: '',
+        botQQ: '10001',
+        dmPolicy: overrides.dmPolicy ?? 'allowlist',
+        allowFrom: overrides.allowFrom ?? ['111'],
+        groupPolicy: overrides.groupPolicy ?? 'allowlist',
+        groupAllowFrom: overrides.groupAllowFrom ?? ['888'],
+        thinkingIndicator: false,
+        groupContextMessages: 20,
+        requireMention: true,
+      },
+    } as any;
+  }
+
+  it('returns empty array when everything is safe', () => {
+    const warnings = collectWarnings(makeCtx());
+    expect(warnings).toEqual([]);
+  });
+
+  it('warns when dmPolicy is open', () => {
+    const warnings = collectWarnings(makeCtx({ dmPolicy: 'open' }));
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(warnings.some((w: string) => w.includes('DM policy is "open"'))).toBe(true);
+  });
+
+  it('warns when groupPolicy is open', () => {
+    const warnings = collectWarnings(makeCtx({ groupPolicy: 'open' }));
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(warnings.some((w: string) => w.includes('Group policy is "open"'))).toBe(true);
+  });
+
+  it('warns when dmPolicy is allowlist but allowFrom is empty', () => {
+    const warnings = collectWarnings(makeCtx({ dmPolicy: 'allowlist', allowFrom: [] }));
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(warnings.some((w: string) => w.includes('allowFrom is empty'))).toBe(true);
+  });
+
+  it('warns when groupPolicy is allowlist but groupAllowFrom is empty', () => {
+    const warnings = collectWarnings(makeCtx({ groupPolicy: 'allowlist', groupAllowFrom: [] }));
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(warnings.some((w: string) => w.includes('groupAllowFrom is empty'))).toBe(true);
+  });
+
+  it('includes account ID in warning messages', () => {
+    const warnings = collectWarnings(makeCtx({ accountId: 'mybot', dmPolicy: 'open' }));
+    expect(warnings.some((w: string) => w.includes('mybot'))).toBe(true);
+  });
+
+  it('returns multiple warnings when both policies are problematic', () => {
+    const warnings = collectWarnings(makeCtx({
+      dmPolicy: 'open',
+      groupPolicy: 'open',
+    }));
+    expect(warnings.length).toBe(2);
+  });
+
+  it('does not warn about empty allowFrom when dmPolicy is open', () => {
+    const warnings = collectWarnings(makeCtx({
+      dmPolicy: 'open',
+      allowFrom: [],
+      groupPolicy: 'allowlist',
+      groupAllowFrom: ['888'],
+    }));
+    // Should only have the "open" warning, not the "empty allowFrom" warning
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('DM policy is "open"');
+  });
+
+  it('uses correct config path format with accounts', () => {
+    const warnings = collectWarnings(makeCtx({ dmPolicy: 'open', accountId: 'test' }));
+    expect(warnings[0]).toContain('channels.qq.accounts.test');
   });
 });

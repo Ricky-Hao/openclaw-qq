@@ -37,7 +37,7 @@ export type QQResolvedAccount = {
   requireMention: boolean;
 };
 
-// ── Raw config shape (channels.qq.<accountId>) ──────────────────────
+// ── Raw config shape (channels.qq.accounts.<accountId>) ─────────────
 
 type QQAccountRaw = {
   enabled?: boolean;
@@ -55,13 +55,18 @@ type QQAccountRaw = {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function getQQSection(cfg: OpenClawConfig): Record<string, QQAccountRaw> {
+/**
+ * Read the accounts map from `channels.qq.accounts`.
+ */
+function getQQAccounts(cfg: OpenClawConfig): Record<string, QQAccountRaw> {
   const channels = (cfg as Record<string, unknown>).channels as
     | Record<string, unknown>
     | undefined;
   if (!channels) return {};
-  const qq = channels.qq as Record<string, QQAccountRaw> | undefined;
-  return qq ?? {};
+  const qq = channels.qq as Record<string, unknown> | undefined;
+  if (!qq) return {};
+  const accounts = qq.accounts as Record<string, QQAccountRaw> | undefined;
+  return accounts ?? {};
 }
 
 function toStringArray(arr: unknown): string[] {
@@ -72,16 +77,16 @@ function toStringArray(arr: unknown): string[] {
 // ── Config Adapter Functions ────────────────────────────────────────
 
 export function listAccountIds(cfg: OpenClawConfig): string[] {
-  return Object.keys(getQQSection(cfg));
+  return Object.keys(getQQAccounts(cfg));
 }
 
 export function resolveAccount(
   cfg: OpenClawConfig,
   accountId?: string | null,
 ): QQResolvedAccount {
-  const section = getQQSection(cfg);
-  const id = accountId || Object.keys(section)[0] || "default";
-  const raw = section[id] ?? {};
+  const accounts = getQQAccounts(cfg);
+  const id = accountId || Object.keys(accounts)[0] || "default";
+  const raw = accounts[id] ?? {};
 
   return {
     accountId: id,
