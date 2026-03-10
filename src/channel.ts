@@ -799,6 +799,8 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
       "QQ does not support Markdown formatting. Use plain text, 【brackets】 for emphasis, and numbered lists.",
       "QQ messages cannot be edited after sending.",
       "QQ image URLs expire within ~2 hours.",
+      "Never send private/direct messages to QQ users unless explicitly configured. Group messages only.",
+      "Plugin tools (message, photo_get, etc.) run host-side, not inside the sandbox. File paths between sandbox and host may differ.",
     ],
   },
 };
