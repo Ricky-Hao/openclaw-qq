@@ -76,12 +76,23 @@ const PollResultParams = Type.Object(
         default: "qq",
       }),
     ),
+    show_voters: Type.Optional(
+      Type.Boolean({
+        description: "是否在每个选项下列出投票用户名，默认 false",
+        default: false,
+      }),
+    ),
   },
   { additionalProperties: false },
 );
 
 type PollCreateInput = Static<typeof PollCreateParams>;
 type PollResultInput = Static<typeof PollResultParams>;
+
+interface VoterInfo {
+  userId: string;
+  name: string;
+}
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -473,7 +484,7 @@ export function createPollResultTool(
     name: "poll_result",
     label: "QQ Poll Result",
     description:
-      "查询QQ群投票结果。返回每个选项的投票人数和百分比。",
+      "查询QQ群投票结果。返回每个选项的投票人数和百分比。设置 show_voters=true 可列出每个选项的投票用户名。",
     parameters: PollResultParams,
 
     async execute(
@@ -497,12 +508,15 @@ export function createPollResultTool(
         const tgt = resolveTarget(poll.target);
         const groupId = tgt?.id || "";
 
+        const showVoters = input.show_voters ?? false;
+
         // Query each emoji's voter list
         const results: Array<{
           label: string;
           emoji: string;
           emojiId: string;
           count: number;
+          voters: VoterInfo[];
         }> = [];
 
         for (const opt of poll.options) {
@@ -512,6 +526,7 @@ export function createPollResultTool(
               emoji: opt.emoji,
               emojiId: opt.emojiId,
               count: 0,
+              voters: [],
             });
             continue;
           }
@@ -526,15 +541,29 @@ export function createPollResultTool(
             };
 
             const botIds = new Set([poll.botQQ, botQQ, ctx.agentAccountId].filter(Boolean));
-            const voterCount = (resp.emoji_like_list || []).filter(
+            const humanVoters = (resp.emoji_like_list || []).filter(
               (v) => !botIds.has(v.user_id),
-            ).length;
+            );
+
+            // Resolve voter names if requested
+            let voters: VoterInfo[] = [];
+            if (showVoters && humanVoters.length > 0) {
+              voters = await Promise.all(
+                humanVoters.map(async (v) => {
+                  const name = groupId
+                    ? await resolveGroupMemberName(client, groupId, v.user_id)
+                    : v.nick_name || v.user_id;
+                  return { userId: v.user_id, name };
+                }),
+              );
+            }
 
             results.push({
               label: opt.label,
               emoji: opt.emoji,
               emojiId: opt.emojiId,
-              count: voterCount,
+              count: humanVoters.length,
+              voters,
             });
           } catch (e) {
             results.push({
@@ -542,6 +571,7 @@ export function createPollResultTool(
               emoji: opt.emoji,
               emojiId: opt.emojiId,
               count: -1,
+              voters: [],
             });
           }
         }
@@ -555,6 +585,9 @@ export function createPollResultTool(
           const bar = makeBar(r.count, maxCount);
           const pct = totalVotes > 0 ? Math.round((Math.max(r.count, 0) / totalVotes) * 100) : 0;
           lines.push(`${r.emoji} ${r.label} — ${r.count}票 (${pct}%) ${bar}`);
+          if (showVoters && r.voters.length > 0) {
+            lines.push(`   👤 ${r.voters.map((v) => v.name).join("、")}`);
+          }
         }
         lines.push("");
         lines.push(`共 ${totalVotes} 票`);
@@ -570,6 +603,7 @@ export function createPollResultTool(
             label: r.label,
             emoji: r.emoji,
             count: r.count,
+            ...(showVoters && r.voters.length > 0 ? { voters: r.voters.map((v) => v.name) } : {}),
           })),
           totalVotes,
           formattedText: lines.join("\n"),
