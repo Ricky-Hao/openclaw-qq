@@ -633,7 +633,7 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
     collectStatusIssues: (accounts) => {
       const issues: ChannelStatusIssue[] = [];
       for (const snap of accounts) {
-        if (!snap.connected) {
+        if (snap.connected === false) {
           issues.push({
             channel: "qq",
             accountId: snap.accountId ?? "unknown",
