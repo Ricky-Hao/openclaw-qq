@@ -633,21 +633,25 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
     collectStatusIssues: (accounts) => {
       const issues: ChannelStatusIssue[] = [];
       for (const snap of accounts) {
-        if (snap.connected === false) {
+        // Config-level warnings only (matching TG/Discord pattern).
+        // Runtime connected/running state is not available in CLI snapshots;
+        // live connectivity is checked via probeAccount in --deep mode.
+        if ((snap as Record<string, unknown>).dmPolicy === "open") {
           issues.push({
             channel: "qq",
             accountId: snap.accountId ?? "unknown",
-            kind: "runtime",
-            message: "WebSocket not connected to NapCat",
-            fix: "Check NapCat container is running and wsUrl is correct",
+            kind: "config",
+            message: "DM policy is open — anyone can message the bot privately",
+            fix: "Set dmPolicy to \"allowlist\" and configure allowFrom",
           });
         }
-        if (snap.connected && !snap.running) {
+        if ((snap as Record<string, unknown>).groupPolicy === "open") {
           issues.push({
             channel: "qq",
             accountId: snap.accountId ?? "unknown",
-            kind: "runtime",
-            message: "Connected but not running (gateway may be initializing)",
+            kind: "config",
+            message: "Group policy is open — bot responds in any group",
+            fix: "Set groupPolicy to \"allowlist\" and configure groupAllowFrom",
           });
         }
       }
