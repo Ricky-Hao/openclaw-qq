@@ -4,9 +4,9 @@ import { matchMember, type GroupMember } from '../src/resolve-member.js';
 // ── Test data ────────────────────────────────────────────────────
 
 const members: GroupMember[] = [
-  { user_id: 100000002, nickname: 'MockUserANick', card: 'MockUserA' },
-  { user_id: 100000004, nickname: 'MockUserC', card: '干干' },
-  { user_id: 100000001, nickname: 'Ricky', card: 'RickyLi' },
+  { user_id: 987654321, nickname: 'TestUserB', card: 'TestUserA' },
+  { user_id: 111222333, nickname: 'TestUserC', card: 'TestA' },
+  { user_id: 123456789, nickname: 'Ricky', card: 'RickyLi' },
   { user_id: 100200300, nickname: 'TestUser', card: '' },
   { user_id: 200300400, nickname: 'Alice', card: 'ALICE_CARD' },
 ];
@@ -15,12 +15,12 @@ describe('resolve-member matchMember', () => {
   // ── Exact match ──────────────────────────────────────────────
 
   it('should exact match card', () => {
-    const result = matchMember(members, 'MockUserA');
+    const result = matchMember(members, 'TestUserA');
     expect(result).toEqual({
       found: true,
-      qq: '100000002',
-      card: 'MockUserA',
-      nickname: 'MockUserANick',
+      qq: '987654321',
+      card: 'TestUserA',
+      nickname: 'TestUserB',
       match_type: 'card',
     });
   });
@@ -37,11 +37,11 @@ describe('resolve-member matchMember', () => {
   });
 
   it('should prefer card match over nickname match', () => {
-    // '干干' is a card, not a nickname — should match card first
-    const result = matchMember(members, '干干');
+    // 'TestA' is a card, not a nickname — should match card first
+    const result = matchMember(members, 'TestA');
     expect(result.found).toBe(true);
     if (result.found) {
-      expect(result.qq).toBe('100000004');
+      expect(result.qq).toBe('111222333');
       expect(result.match_type).toBe('card');
     }
   });
@@ -50,7 +50,7 @@ describe('resolve-member matchMember', () => {
     const result = matchMember(members, 'Ricky');
     expect(result).toEqual({
       found: true,
-      qq: '100000001',
+      qq: '123456789',
       card: 'RickyLi',
       nickname: 'Ricky',
       match_type: 'nickname',
@@ -63,7 +63,7 @@ describe('resolve-member matchMember', () => {
     const result = matchMember(members, 'rickyli');
     expect(result).toEqual({
       found: true,
-      qq: '100000001',
+      qq: '123456789',
       card: 'RickyLi',
       nickname: 'Ricky',
       match_type: 'card_ci',
@@ -74,7 +74,7 @@ describe('resolve-member matchMember', () => {
     const result = matchMember(members, 'ricky');
     expect(result).toEqual({
       found: true,
-      qq: '100000001',
+      qq: '123456789',
       card: 'RickyLi',
       nickname: 'Ricky',
       match_type: 'nickname_ci',
@@ -99,7 +99,7 @@ describe('resolve-member matchMember', () => {
     expect(result.found).toBe(false);
     if (!result.found) {
       expect(result.candidates.length).toBeGreaterThan(0);
-      expect(result.candidates.some(c => c.qq === '100000001')).toBe(true);
+      expect(result.candidates.some(c => c.qq === '123456789')).toBe(true);
       expect(result.message).toBe('未精确匹配，以下是相似成员');
     }
   });
@@ -120,18 +120,18 @@ describe('resolve-member matchMember', () => {
     expect(result.found).toBe(false);
     if (!result.found) {
       // Contains match should still find RickyLi / Ricky
-      expect(result.candidates.some(c => c.qq === '100000001')).toBe(true);
+      expect(result.candidates.some(c => c.qq === '123456789')).toBe(true);
     }
   });
 
   // ── Contains match ───────────────────────────────────────────
 
   it('should return candidates for contains match', () => {
-    const result = matchMember(members, '永恒');
+    const result = matchMember(members, 'UserC');
     expect(result.found).toBe(false);
     if (!result.found) {
       expect(result.candidates.length).toBeGreaterThan(0);
-      expect(result.candidates.some(c => c.qq === '100000004')).toBe(true);
+      expect(result.candidates.some(c => c.qq === '111222333')).toBe(true);
       expect(result.message).toBe('未精确匹配，以下是相似成员');
     }
   });
@@ -173,7 +173,7 @@ describe('resolve-member matchMember', () => {
   // ── Edge cases ───────────────────────────────────────────────
 
   it('should handle empty member list', () => {
-    const result = matchMember([], 'MockUserA');
+    const result = matchMember([], 'TestUserA');
     expect(result).toEqual({
       found: false,
       candidates: [],
@@ -191,12 +191,12 @@ describe('resolve-member matchMember', () => {
   });
 
   it('should match card before nickname when both could match', () => {
-    // '干干' matches card of member 100000004
-    // It's also a prefix of card 'MockUserA' but exact card match wins
-    const result = matchMember(members, '干干');
+    // 'TestA' matches card of member 111222333
+    // It's also a prefix of card 'TestUserA' but exact card match wins
+    const result = matchMember(members, 'TestA');
     expect(result.found).toBe(true);
     if (result.found) {
-      expect(result.qq).toBe('100000004');
+      expect(result.qq).toBe('111222333');
       expect(result.match_type).toBe('card');
     }
   });

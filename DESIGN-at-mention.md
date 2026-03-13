@@ -12,10 +12,10 @@
 
 | 输入 | 解析结果 |
 |---|---|
-| `@100000001` | `{ type: "at", data: { qq: "100000001" } }` |
+| `@123456789` | `{ type: "at", data: { qq: "123456789" } }` |
 | `@all` | `{ type: "at", data: { qq: "all" } }` |
 
-其他格式（如 `@MockUserA`）保持原样输出为纯文本，不做解析。
+其他格式（如 `@用户A`）保持原样输出为纯文本，不做解析。
 
 ### 正则
 
@@ -52,13 +52,13 @@ export function buildTextSegments(text: string): MessageSegment[]
 ### 测试用例（在 tests/message.test.ts 中新增）
 
 ```
-"@100000001 快来" → [at:100000001, text:" 快来"]
+"@123456789 快来" → [at:123456789, text:" 快来"]
 "@all 开会" → [at:all, text:" 开会"]
-"你好@100000001再见" → [text:"你好", at:100000001, text:"再见"]
-"[表情201]@100000001" → [face:201, at:100000001]
-"@MockUserA 你好" → [text:"@MockUserA 你好"]  (不解析昵称)
+"你好@123456789再见" → [text:"你好", at:123456789, text:"再见"]
+"[表情201]@123456789" → [face:201, at:123456789]
+"@用户A 你好" → [text:"@用户A 你好"]  (不解析昵称)
 "@123 短号" → [text:"@123 短号"]  (太短不解析)
-"@all@100000001 双at" → [at:all, at:100000001, text:" 双at"]
+"@all@123456789 双at" → [at:all, at:123456789, text:" 双at"]
 纯文本 → 现有行为不变
 ```
 
@@ -86,9 +86,9 @@ params: {
 ```json
 {
   "found": true,
-  "qq": "100000002",
-  "card": "MockUserA",
-  "nickname": "MockUserANick",
+  "qq": "987654321",
+  "card": "用户A",
+  "nickname": "用户B昵称",
   "match_type": "card"
 }
 ```
@@ -98,8 +98,8 @@ params: {
 {
   "found": false,
   "candidates": [
-    { "qq": "100000002", "card": "MockUserA", "nickname": "MockUserANick" },
-    { "qq": "100000004", "card": "干干", "nickname": "MockUserC" }
+    { "qq": "987654321", "card": "用户A", "nickname": "用户B昵称" },
+    { "qq": "111222333", "card": "干干", "nickname": "用户C" }
   ],
   "message": "未精确匹配，以下是相似成员"
 }
@@ -188,7 +188,7 @@ group_id 无效 → error
 
 ```
 ## @ 功能
-- @某人：写 @QQ号，如 @100000001（群聊上下文里每条消息都有 sender_id）
+- @某人：写 @QQ号，如 @123456789（群聊上下文里每条消息都有 sender_id）
 - @全体成员：写 @all
 - 如果只知道昵称不知道 QQ 号，先调 qq_resolve_member(group_id, name) 查询
 ```

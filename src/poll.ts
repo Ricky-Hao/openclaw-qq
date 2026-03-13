@@ -61,6 +61,12 @@ const PollCreateParams = Type.Object(
     target: Type.String({
       description: '目标群，如 "qq:group:111222333"',
     }),
+    show_voters: Type.Optional(
+      Type.Boolean({
+        description: "结算时是否展示投票用户名，默认 true",
+        default: true,
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -111,8 +117,9 @@ interface PollData {
   createdAt: string;
   expiresAt?: string;
   botQQ: string;
-  creatorQQ?: string; // who initiated the poll
-  cronJobId?: string; // agent-cron job ID for auto-settlement
+  creatorQQ?: string;       // who initiated the poll
+  cronJobId?: string;       // agent-cron job ID for auto-settlement
+  showVoters?: boolean;     // settlement preference from poll_create
 }
 
 // ── Default emoji sequence ───────────────────────────────────────
@@ -252,6 +259,7 @@ interface CreatePollParams {
   channel: string;
   durationMs?: number;     // duration in milliseconds (undefined = no auto-settle)
   durationLabel?: string;  // original duration string for result display (e.g. "10m")
+  showVoters?: boolean;    // show voter names on settlement (default true)
   client: OneBotClient;
   botQQ: string;
   creatorQQ?: string;
@@ -265,8 +273,18 @@ interface CreatePollParams {
  */
 async function executePollCreate(params: CreatePollParams): Promise<AgentToolResult<unknown>> {
   const {
-    question, options: optionLabels, target, channel,
-    durationMs, durationLabel, client, botQQ, creatorQQ, agentId, saveCtx,
+    question,
+    options: optionLabels,
+    target,
+    channel,
+    durationMs,
+    durationLabel,
+    showVoters = true,
+    client,
+    botQQ,
+    creatorQQ,
+    agentId,
+    saveCtx,
   } = params;
 
   // Validate target
@@ -339,6 +357,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
     expiresAt,
     botQQ,
     creatorQQ,
+    showVoters,
   };
 
   savePoll(saveCtx, poll);
@@ -373,7 +392,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
         },
         payload: {
           kind: "agentTurn",
-          message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}", show_voters=true) 查询结果，然后把 formattedText 发到群 ${target}。`,
+          message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}", show_voters=${showVoters ? "true" : "false"}) 查询结果，然后把 formattedText 发到群 ${target}。`,
           timeoutSeconds: 120,
         },
         delivery: {
@@ -400,7 +419,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
           schedule: { kind: "at", at: expiresAt },
           payload: {
             kind: "agentTurn",
-            message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}", show_voters=true) 查询结果，然后把 formattedText 发到群 ${target}。`,
+            message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}", show_voters=${showVoters ? "true" : "false"}) 查询结果，然后把 formattedText 发到群 ${target}。`,
           },
           delivery: {
             mode: "announce",
@@ -462,6 +481,7 @@ export function createPollCreateTool(
           channel: input.channel || "qq",
           durationMs,
           durationLabel: input.duration,
+          showVoters: input.show_voters ?? true,
           client,
           botQQ,
           creatorQQ: ctx.requesterSenderId || undefined,
@@ -508,7 +528,7 @@ export function createPollResultTool(
         const tgt = resolveTarget(poll.target);
         const groupId = tgt?.id || "";
 
-        const showVoters = input.show_voters ?? false;
+        const showVoters = input.show_voters ?? poll.showVoters ?? false;
 
         // Query each emoji's voter list
         const results: Array<{

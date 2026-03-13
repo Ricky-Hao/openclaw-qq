@@ -223,9 +223,9 @@ describe('onebot/message.ts', () => {
     // ── @mention parsing ─────────────────────────────────────────
 
     it('should parse @QQ号 into at segment', () => {
-      const result = buildTextSegments('@100000001 快来');
+      const result = buildTextSegments('@123456789 快来');
       expect(result).toEqual([
-        { type: 'at', data: { qq: '100000001' } },
+        { type: 'at', data: { qq: '123456789' } },
         { type: 'text', data: { text: ' 快来' } },
       ]);
     });
@@ -239,26 +239,26 @@ describe('onebot/message.ts', () => {
     });
 
     it('should parse @QQ号 in the middle of text', () => {
-      const result = buildTextSegments('你好@100000001再见');
+      const result = buildTextSegments('你好@123456789再见');
       expect(result).toEqual([
         { type: 'text', data: { text: '你好' } },
-        { type: 'at', data: { qq: '100000001' } },
+        { type: 'at', data: { qq: '123456789' } },
         { type: 'text', data: { text: '再见' } },
       ]);
     });
 
     it('should parse face and @QQ号 together', () => {
-      const result = buildTextSegments('[表情201]@100000001');
+      const result = buildTextSegments('[表情201]@123456789');
       expect(result).toEqual([
         { type: 'face', data: { id: '201' } },
-        { type: 'at', data: { qq: '100000001' } },
+        { type: 'at', data: { qq: '123456789' } },
       ]);
     });
 
     it('should NOT parse @nickname (non-digit)', () => {
-      const result = buildTextSegments('@MockUserA 你好');
+      const result = buildTextSegments('@TestUserA 你好');
       expect(result).toEqual([
-        { type: 'text', data: { text: '@MockUserA 你好' } },
+        { type: 'text', data: { text: '@TestUserA 你好' } },
       ]);
     });
 
@@ -270,10 +270,10 @@ describe('onebot/message.ts', () => {
     });
 
     it('should parse consecutive @all and @QQ号', () => {
-      const result = buildTextSegments('@all@100000001 双at');
+      const result = buildTextSegments('@all@123456789 双at');
       expect(result).toEqual([
         { type: 'at', data: { qq: 'all' } },
-        { type: 'at', data: { qq: '100000001' } },
+        { type: 'at', data: { qq: '123456789' } },
         { type: 'text', data: { text: ' 双at' } },
       ]);
     });
@@ -304,12 +304,12 @@ describe('onebot/message.ts', () => {
     });
 
     it('should handle @QQ号 mixed with face and text', () => {
-      const result = buildTextSegments('Hi [表情1] @100000002 bye [face:2]');
+      const result = buildTextSegments('Hi [表情1] @987654321 bye [face:2]');
       expect(result).toEqual([
         { type: 'text', data: { text: 'Hi ' } },
         { type: 'face', data: { id: '1' } },
         { type: 'text', data: { text: ' ' } },
-        { type: 'at', data: { qq: '100000002' } },
+        { type: 'at', data: { qq: '987654321' } },
         { type: 'text', data: { text: ' bye ' } },
         { type: 'face', data: { id: '2' } },
       ]);
