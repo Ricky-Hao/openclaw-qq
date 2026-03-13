@@ -219,6 +219,101 @@ describe('onebot/message.ts', () => {
         { type: 'face', data: { id: '2' } },
       ]);
     });
+
+    // ── @mention parsing ─────────────────────────────────────────
+
+    it('should parse @QQ号 into at segment', () => {
+      const result = buildTextSegments('@100000001 快来');
+      expect(result).toEqual([
+        { type: 'at', data: { qq: '100000001' } },
+        { type: 'text', data: { text: ' 快来' } },
+      ]);
+    });
+
+    it('should parse @all into at segment', () => {
+      const result = buildTextSegments('@all 开会');
+      expect(result).toEqual([
+        { type: 'at', data: { qq: 'all' } },
+        { type: 'text', data: { text: ' 开会' } },
+      ]);
+    });
+
+    it('should parse @QQ号 in the middle of text', () => {
+      const result = buildTextSegments('你好@100000001再见');
+      expect(result).toEqual([
+        { type: 'text', data: { text: '你好' } },
+        { type: 'at', data: { qq: '100000001' } },
+        { type: 'text', data: { text: '再见' } },
+      ]);
+    });
+
+    it('should parse face and @QQ号 together', () => {
+      const result = buildTextSegments('[表情201]@100000001');
+      expect(result).toEqual([
+        { type: 'face', data: { id: '201' } },
+        { type: 'at', data: { qq: '100000001' } },
+      ]);
+    });
+
+    it('should NOT parse @nickname (non-digit)', () => {
+      const result = buildTextSegments('@MockUserA 你好');
+      expect(result).toEqual([
+        { type: 'text', data: { text: '@MockUserA 你好' } },
+      ]);
+    });
+
+    it('should NOT parse @short numbers (less than 5 digits)', () => {
+      const result = buildTextSegments('@123 短号');
+      expect(result).toEqual([
+        { type: 'text', data: { text: '@123 短号' } },
+      ]);
+    });
+
+    it('should parse consecutive @all and @QQ号', () => {
+      const result = buildTextSegments('@all@100000001 双at');
+      expect(result).toEqual([
+        { type: 'at', data: { qq: 'all' } },
+        { type: 'at', data: { qq: '100000001' } },
+        { type: 'text', data: { text: ' 双at' } },
+      ]);
+    });
+
+    it('should parse 5-digit QQ number (minimum)', () => {
+      const result = buildTextSegments('@12345 test');
+      expect(result).toEqual([
+        { type: 'at', data: { qq: '12345' } },
+        { type: 'text', data: { text: ' test' } },
+      ]);
+    });
+
+    it('should parse 11-digit QQ number (maximum)', () => {
+      const result = buildTextSegments('@12345678901 test');
+      expect(result).toEqual([
+        { type: 'at', data: { qq: '12345678901' } },
+        { type: 'text', data: { text: ' test' } },
+      ]);
+    });
+
+    it('should NOT parse 12-digit number as QQ', () => {
+      const result = buildTextSegments('@123456789012 test');
+      // 11 digits matched, remaining "2 test" is text
+      expect(result).toEqual([
+        { type: 'at', data: { qq: '12345678901' } },
+        { type: 'text', data: { text: '2 test' } },
+      ]);
+    });
+
+    it('should handle @QQ号 mixed with face and text', () => {
+      const result = buildTextSegments('Hi [表情1] @100000002 bye [face:2]');
+      expect(result).toEqual([
+        { type: 'text', data: { text: 'Hi ' } },
+        { type: 'face', data: { id: '1' } },
+        { type: 'text', data: { text: ' ' } },
+        { type: 'at', data: { qq: '100000002' } },
+        { type: 'text', data: { text: ' bye ' } },
+        { type: 'face', data: { id: '2' } },
+      ]);
+    });
   });
 
   describe('extractImageUrls', () => {

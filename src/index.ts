@@ -4,6 +4,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { qqChannelPlugin, setPluginRuntime } from "./channel.js";
 import { createPollCreateTool, createPollResultTool } from "./poll.js";
 import { createQQResolveImageTool } from "./resolve-image.js";
+import { createQQResolveMemberTool } from "./resolve-member.js";
 
 const plugin = {
   id: "openclaw-qq",
@@ -26,6 +27,9 @@ const plugin = {
 
     // Register qq_resolve_image tool for retrieving historical images
     api.registerTool(createQQResolveImageTool, { name: "qq_resolve_image" });
+
+    // Register qq_resolve_member tool for looking up group members by nickname
+    api.registerTool(createQQResolveMemberTool, { name: "qq_resolve_member" });
   },
 };
 

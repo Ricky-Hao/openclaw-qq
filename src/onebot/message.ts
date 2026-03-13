@@ -68,31 +68,40 @@ export function extractImageUrls(segments: MessageSegment[]): string[] {
 }
 
 /**
- * Build message segments from text, parsing embedded QQ face markers.
+ * Build message segments from text, parsing embedded QQ face markers and @mentions.
  *
  * Recognizes:
  *   - [表情XXX]  → face segment with id=XXX
  *   - [face:XXX] → face segment with id=XXX
+ *   - @all        → at segment with qq="all"
+ *   - @DDDDD      → at segment with qq=digits (5-11 digit QQ numbers)
  *   - Everything else → text segment
  *
- * This allows bots to include QQ native emoji in their replies.
+ * This allows bots to include QQ native emoji and @mentions in their replies.
  */
 export function buildTextSegments(text: string): MessageSegment[] {
-  // Match [表情123] or [face:123]
-  const FACE_RE = /\[(?:表情|face:)(\d+)\]/g;
+  // Combined tokenizer: face markers and @mentions
+  const TOKEN_RE = /\[(?:表情|face:)(\d+)\]|@(all|\d{5,11})/g;
 
   const segments: MessageSegment[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = FACE_RE.exec(text)) !== null) {
+  while ((match = TOKEN_RE.exec(text)) !== null) {
     // Push any text before this match
     if (match.index > lastIndex) {
       segments.push({ type: "text", data: { text: text.slice(lastIndex, match.index) } });
     }
-    // Push face segment
-    segments.push({ type: "face", data: { id: match[1] } });
-    lastIndex = FACE_RE.lastIndex;
+
+    if (match[1] !== undefined) {
+      // Face segment: [表情123] or [face:123]
+      segments.push({ type: "face", data: { id: match[1] } });
+    } else if (match[2] !== undefined) {
+      // At segment: @all or @digits
+      segments.push({ type: "at", data: { qq: match[2] } });
+    }
+
+    lastIndex = TOKEN_RE.lastIndex;
   }
 
   // Push remaining text
@@ -100,7 +109,7 @@ export function buildTextSegments(text: string): MessageSegment[] {
     segments.push({ type: "text", data: { text: text.slice(lastIndex) } });
   }
 
-  // If no faces found, return simple text segment
+  // If no tokens found, return simple text segment
   if (segments.length === 0) {
     return [{ type: "text", data: { text } }];
   }
