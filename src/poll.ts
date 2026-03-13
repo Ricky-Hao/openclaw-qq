@@ -373,7 +373,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
         },
         payload: {
           kind: "agentTurn",
-          message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}") 查询结果，然后把 formattedText 发到群 ${target}。`,
+          message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}", show_voters=true) 查询结果，然后把 formattedText 发到群 ${target}。`,
           timeoutSeconds: 120,
         },
         delivery: {
@@ -400,7 +400,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
           schedule: { kind: "at", at: expiresAt },
           payload: {
             kind: "agentTurn",
-            message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}") 查询结果，然后把 formattedText 发到群 ${target}。`,
+            message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}", show_voters=true) 查询结果，然后把 formattedText 发到群 ${target}。`,
           },
           delivery: {
             mode: "announce",
