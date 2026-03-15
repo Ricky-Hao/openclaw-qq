@@ -67,6 +67,12 @@ const PollCreateParams = Type.Object(
         default: true,
       }),
     ),
+    mention_all: Type.Optional(
+      Type.Boolean({
+        description: "是否@所有人，默认 false",
+        default: false,
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -260,6 +266,7 @@ interface CreatePollParams {
   durationMs?: number;     // duration in milliseconds (undefined = no auto-settle)
   durationLabel?: string;  // original duration string for result display (e.g. "10m")
   showVoters?: boolean;    // show voter names on settlement (default true)
+  mentionAll?: boolean;    // @all in poll message (default false)
   client: OneBotClient;
   botQQ: string;
   creatorQQ?: string;
@@ -280,6 +287,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
     durationMs,
     durationLabel,
     showVoters = true,
+    mentionAll = false,
     client,
     botQQ,
     creatorQQ,
@@ -306,7 +314,11 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
   });
 
   // Build poll message text
-  const lines = [`📊 投票：${question}`, ""];
+  const lines: string[] = [];
+  if (mentionAll) {
+    lines.push("@all");
+  }
+  lines.push(`📊 投票：${question}`, "");
   for (const opt of pollOptions) {
     lines.push(`${opt.emoji} ${opt.label}`);
   }
@@ -375,7 +387,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
         ownerAgentId: string;
         schedule: { kind: "at"; at: string };
         payload: { kind: "agentTurn"; message: string; timeoutSeconds?: number };
-        delivery: { mode: "announce"; channel: string; to: string };
+        delivery: { mode: "announce" | "none"; channel: string; to: string };
       }) => Promise<{ ok: boolean; jobId?: string; error?: string }>;
 
       const addJob = (globalThis as Record<symbol, unknown>)[
@@ -396,7 +408,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
           timeoutSeconds: 120,
         },
         delivery: {
-          mode: "announce",
+          mode: "none",
           channel,
           to: target,
         },
@@ -422,7 +434,7 @@ async function executePollCreate(params: CreatePollParams): Promise<AgentToolRes
             message: `投票「${question}」时间到了！请调用 poll_result(message_id="${messageIdStr}", show_voters=${showVoters ? "true" : "false"}) 查询结果，然后把 formattedText 发到群 ${target}。`,
           },
           delivery: {
-            mode: "announce",
+            mode: "none",
             channel,
             to: target,
           },
@@ -482,6 +494,7 @@ export function createPollCreateTool(
           durationMs,
           durationLabel: input.duration,
           showVoters: input.show_voters ?? true,
+          mentionAll: input.mention_all ?? false,
           client,
           botQQ,
           creatorQQ: ctx.requesterSenderId || undefined,
