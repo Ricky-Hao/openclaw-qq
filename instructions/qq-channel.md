@@ -14,8 +14,8 @@
 
 ### 图片
 - 当前消息的图片以 `[media attached: xxx.jpg (image)]` 形式直接注入，可以直接用 `image` 工具分析
-- 历史消息的图片以 `[图片 - 使用 qq_resolve_image(file: "HASH.jpg") 获取]` 形式出现，需要先调 `qq_resolve_image` 获取本地路径再处理
-- 简单说：当前消息的图直接能用，历史消息的图需要先 resolve
+- 历史消息的图片以 `[图片 - 使用 qq_resolve_image(file: "HASH.jpg") 获取]` 形式出现在 chat history 中。**这代表一张真实图片**，不是空占位符。需要先调 `qq_resolve_image` 获取本地路径再用 `image` 工具查看
+- 当用户问的问题明显和图片相关，但当前消息没有附带图片时，**主动**从 chat history 中找到最近的图片标记并 resolve
 
 ### 文本格式
 - QQ 不支持 Markdown 渲染，回复必须纯文本
