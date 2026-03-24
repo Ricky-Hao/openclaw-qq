@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "npx tsx tests/e2e/run.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"
@@ -18,13 +19,16 @@
     "@types/ws": "^8.5.14",
     "openclaw": "latest",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "@ricky/openclaw-e2e": "file:../openclaw-e2e"
   },
   "files": [
     "dist"
   ],
   "license": "MIT",
   "openclaw": {
-    "extensions": ["dist/index.js"]
+    "extensions": [
+      "dist/index.js"
+    ]
   }
 }

@@ -114,7 +114,7 @@ export function createQQResolveImageTool(ctx: ToolContext): AnyAgentTool {
     name: "qq_resolve_image",
     label: "QQ历史图片解析",
     description:
-      '获取QQ聊天历史中的图片。传入历史消息中 [图片 - 使用 qq_resolve_image(file: "xxx") 获取] 标记里的 file 值。返回本地文件路径，可直接用于 photo_save 或 image 等工具。',
+      "获取QQ群历史图片。",
     parameters: ResolveImageParams,
 
     async execute(_execCtx, params): Promise<AgentToolResult<unknown>> {

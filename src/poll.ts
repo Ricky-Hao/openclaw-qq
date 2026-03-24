@@ -466,7 +466,7 @@ export function createPollCreateTool(
     name: "poll_create",
     label: "QQ Poll Create",
     description:
-      "在QQ群创建投票。发送投票消息并自动贴上选项表情，群友点表情即可投票。支持定时自动结算。",
+      "创建QQ群投票。见 qq-poll skill。",
     parameters: PollCreateParams,
 
     async execute(
@@ -517,7 +517,7 @@ export function createPollResultTool(
     name: "poll_result",
     label: "QQ Poll Result",
     description:
-      "查询QQ群投票结果。返回每个选项的投票人数和百分比。设置 show_voters=true 可列出每个选项的投票用户名。",
+      "查询QQ群投票结果。见 qq-poll skill。",
     parameters: PollResultParams,
 
     async execute(

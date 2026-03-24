@@ -1,0 +1,25 @@
+id: poll-create
+name: "创建投票"
+description: "用户请求在 QQ 群创建投票，验证 poll_create 被调用"
+tags:
+  - poll
+  - basic
+
+setup:
+  agent_id: "test-bot"
+  clean_before: true
+
+turns:
+  - role: user
+    content: >
+      在 qq:group:1004131062 创建一个投票，问题是"测试投票"，选项有 A、B、C，1分钟后结算
+
+graders:
+  - type: tool_calls
+    assertions:
+      - tool: "poll_create"
+        params_contain:
+          target: "qq:group:1004131062"
+
+cleanup:
+  clean_agent_data: true

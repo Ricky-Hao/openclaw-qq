@@ -1,0 +1,25 @@
+id: qq-resolve-member
+name: "查找群成员QQ号"
+description: "用户请求通过昵称查找群成员 QQ 号，验证 qq_resolve_member 被调用"
+tags:
+  - resolve
+  - basic
+
+setup:
+  agent_id: "test-bot"
+  clean_before: true
+
+turns:
+  - role: user
+    content: >
+      帮我查一下 qq:group:1004131062 群里 RickyHao 的 QQ 号
+
+graders:
+  - type: tool_calls
+    assertions:
+      - tool: "qq_resolve_member"
+        params_contain:
+          group_id: "1004131062"
+
+cleanup:
+  clean_agent_data: true

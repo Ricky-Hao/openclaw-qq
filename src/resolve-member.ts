@@ -178,7 +178,7 @@ export function createQQResolveMemberTool(ctx: ToolContext): AnyAgentTool {
     name: "qq_resolve_member",
     label: "QQ群成员查询",
     description:
-      "通过群昵称或QQ昵称查找群成员的QQ号。用于需要 @某人但只知道昵称的场景。",
+      "通过昵称查找群成员QQ号。",
     parameters: ResolveMemberParams,
 
     async execute(_execCtx, params): Promise<AgentToolResult<unknown>> {
