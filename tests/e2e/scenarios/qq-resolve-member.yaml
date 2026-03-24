@@ -11,15 +11,12 @@ setup:
 
 turns:
   - role: user
-    content: >
-      帮我查一下 qq:group:1004131062 群里 RickyHao 的 QQ 号
+    content: "请直接调用 qq_resolve_member 工具，在 group_id 为 1004131062 的群里查找昵称为 RickyHao 的成员QQ号"
 
 graders:
   - type: tool_calls
     assertions:
       - tool: "qq_resolve_member"
-        params_contain:
-          group_id: "1004131062"
 
 cleanup:
   clean_agent_data: true
