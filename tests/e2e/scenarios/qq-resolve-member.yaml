@@ -11,7 +11,7 @@ setup:
 
 turns:
   - role: user
-    content: "请直接调用 qq_resolve_member 工具，在 group_id 为 1004131062 的群里查找昵称为 RickyHao 的成员QQ号"
+    content: "请直接调用 qq_resolve_member 工具，在 group_id 为 123456789 的群里查找昵称为 TestUser 的成员QQ号"
 
 graders:
   - type: tool_calls
