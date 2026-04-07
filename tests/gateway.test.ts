@@ -157,7 +157,7 @@ describe('parseHistoryMessageSegments', () => {
     expect(result).toBe('[回复消息]');
   });
 
-  it('should not recursively call API for nested replies', async () => {
+  it('should recursively resolve nested replies up to maxDepth', async () => {
     const mockClient = {
       callApi: vi.fn().mockResolvedValue({
         sender: { card: '张三', nickname: 'zhangsan' },
@@ -168,6 +168,28 @@ describe('parseHistoryMessageSegments', () => {
     const result = await parseHistoryMessageSegments([
       { type: 'reply', data: { id: '123' } },
     ], mockClient);
+
+    // With default maxDepth=3, starting at depth=0:
+    // depth 0: resolves reply 123 → gets reply 456 → recurse depth 1
+    // depth 1: resolves reply 456 → gets reply 456 → recurse depth 2
+    // depth 2: resolves reply 456 → gets reply 456 → recurse depth 3
+    // depth 3: depth >= maxDepth → [回复消息]
+    expect(result).toBe('[回复 张三: [回复 张三: [回复 张三: [回复消息]]]]');
+    // 3 API calls: depths 0, 1, 2
+    expect(mockClient.callApi).toHaveBeenCalledTimes(3);
+  });
+
+  it('should not recursively call API when maxDepth is 1', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'reply', data: { id: '456' } }],
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'reply', data: { id: '123' } },
+    ], mockClient, 0, 1);
 
     expect(result).toBe('[回复 张三: [回复消息]]');
     expect(mockClient.callApi).toHaveBeenCalledTimes(1);
@@ -309,6 +331,223 @@ describe('parseHistoryMessageSegments', () => {
     const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[文件: a.pdf - 使用 qq_download_group_file(file_id: "/id-a") 下载] [文件: b.doc]');
   });
+
+  // ── Forward segment tests ────────────────────────────────────────
+
+  it('should render forward segment as [合并转发消息] without client', async () => {
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-123' } },
+    ]);
+    expect(result).toBe('[合并转发消息]');
+  });
+
+  it('should expand forward segment when client returns messages', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockImplementation((action: string) => {
+        if (action === 'get_forward_msg') {
+          return Promise.resolve({
+            messages: [
+              {
+                sender: { card: '张三', nickname: 'zhangsan' },
+                content: [{ type: 'text', data: { text: '消息一' } }],
+              },
+              {
+                sender: { nickname: '李四' },
+                content: [{ type: 'text', data: { text: '消息二' } }],
+              },
+            ],
+          });
+        }
+        return Promise.resolve({});
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-123' } },
+    ], mockClient);
+
+    expect(result).toBe('[合并转发消息:\n张三: 消息一\n李四: 消息二]');
+    expect(mockClient.callApi).toHaveBeenCalledWith('get_forward_msg', { message_id: 'fwd-123' });
+  });
+
+  it('should use message field when content is absent (NapCat compat)', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            sender: { card: '王五', nickname: 'wangwu' },
+            message: [{ type: 'text', data: { text: 'NapCat格式' } }],
+          },
+        ],
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-456' } },
+    ], mockClient);
+
+    expect(result).toBe('[合并转发消息:\n王五: NapCat格式]');
+  });
+
+  it('should fallback to [合并转发消息] when get_forward_msg fails', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockRejectedValue(new Error('API error')),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-789' } },
+    ], mockClient);
+
+    expect(result).toBe('[合并转发消息]');
+  });
+
+  it('should fallback to [合并转发消息] when messages array is empty', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({ messages: [] }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-empty' } },
+    ], mockClient);
+
+    expect(result).toBe('[合并转发消息]');
+  });
+
+  it('should expand forward containing images', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            sender: { card: '张三' },
+            content: [
+              { type: 'text', data: { text: '看这张图 ' } },
+              { type: 'image', data: { file: 'FWD_IMG.jpg' } },
+            ],
+          },
+        ],
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-img' } },
+    ], mockClient);
+
+    expect(result).toBe('[合并转发消息:\n张三: 看这张图 [图片 - 使用 qq_resolve_image(file: "FWD_IMG.jpg") 获取]]');
+  });
+
+  it('should expand nested forward up to maxDepth and degrade deeper levels', async () => {
+    let callCount = 0;
+    const mockClient = {
+      callApi: vi.fn().mockImplementation((action: string) => {
+        if (action === 'get_forward_msg') {
+          callCount++;
+          return Promise.resolve({
+            messages: [
+              {
+                sender: { card: `层级${callCount}` },
+                content: [{ type: 'forward', data: { id: `nested-${callCount}` } }],
+              },
+            ],
+          });
+        }
+        return Promise.resolve({});
+      }),
+    };
+
+    // Start at depth 0, maxDepth 2 → should expand 2 levels, degrade at level 3
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-root' } },
+    ], mockClient, 0, 2);
+
+    // depth 0: expand → 层级1: [forward nested-1]
+    // depth 1: expand → 层级2: [forward nested-2]
+    // depth 2: >= maxDepth → [合并转发消息]
+    expect(result).toBe('[合并转发消息:\n层级1: [合并转发消息:\n层级2: [合并转发消息]]]');
+    // 2 API calls (at depth 0 and depth 1), depth 2 degrades
+    expect(mockClient.callApi).toHaveBeenCalledTimes(2);
+  });
+
+  it('should expand forward containing reply segments', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockImplementation((action: string, params: any) => {
+        if (action === 'get_forward_msg') {
+          return Promise.resolve({
+            messages: [
+              {
+                sender: { card: '张三' },
+                content: [
+                  { type: 'reply', data: { id: '999' } },
+                  { type: 'text', data: { text: '回复内容' } },
+                ],
+              },
+            ],
+          });
+        }
+        if (action === 'get_msg' && params.message_id === 999) {
+          return Promise.resolve({
+            sender: { card: '李四' },
+            message: [{ type: 'text', data: { text: '原始消息' } }],
+          });
+        }
+        return Promise.resolve({});
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: 'fwd-reply' } },
+    ], mockClient);
+
+    expect(result).toBe('[合并转发消息:\n张三: [回复 李四: 原始消息]回复内容]');
+  });
+
+  // ── Depth control tests ──────────────────────────────────────────
+
+  it('should degrade both reply and forward when depth >= maxDepth', async () => {
+    const mockClient = {
+      callApi: vi.fn(),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'reply', data: { id: '123' } },
+      { type: 'text', data: { text: ' ' } },
+      { type: 'forward', data: { id: 'fwd-1' } },
+    ], mockClient, 3, 3);
+
+    // depth >= maxDepth → both reply and forward degrade
+    expect(result).toBe('[回复消息] [合并转发消息]');
+    // No API calls should be made
+    expect(mockClient.callApi).not.toHaveBeenCalled();
+  });
+
+  it('should use default depth=0 and maxDepth=3 when not specified', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三' },
+        message: [{ type: 'text', data: { text: '嗨' } }],
+      }),
+    };
+
+    // Not passing depth/maxDepth — should default to 0/3
+    const result = await parseHistoryMessageSegments([
+      { type: 'reply', data: { id: '123' } },
+    ], mockClient);
+
+    expect(result).toBe('[回复 张三: 嗨]');
+    expect(mockClient.callApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('should fallback to [合并转发消息] when forward has no id', async () => {
+    const mockClient = {
+      callApi: vi.fn(),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: {} },
+    ], mockClient);
+
+    expect(result).toBe('[合并转发消息]');
+    expect(mockClient.callApi).not.toHaveBeenCalled();
+  });
 });
 
 // ── resolveReplyContext ──────────────────────────────────────────────
@@ -416,7 +655,7 @@ describe('resolveReplyContext', () => {
     expect(result).toBe('[引用 ? 的消息: hi]\n');
   });
 
-  it('should not recursively resolve nested replies in quoted message', async () => {
+  it('should recursively resolve nested replies in quoted message up to maxDepth', async () => {
     const mockClient = {
       callApi: vi.fn().mockResolvedValue({
         sender: { card: '张三', nickname: 'zhangsan' },
@@ -428,11 +667,13 @@ describe('resolveReplyContext', () => {
     };
     const segments = [{ type: 'reply', data: { id: '123' } }];
     const result = await resolveReplyContext(segments, mockClient);
-    // The nested reply should degrade to [回复消息] since parseHistoryMessageSegments
-    // is called without client
-    expect(result).toBe('[引用 张三 的消息: [回复消息]嵌套回复]\n');
-    // Only one API call (for the outer reply, not the nested one)
-    expect(mockClient.callApi).toHaveBeenCalledTimes(1);
+    // resolveReplyContext calls parseHistoryMessageSegments with depth=1, maxDepth=3
+    // depth 1: resolves reply 456 → gets reply 456 + text → recurse depth 2
+    // depth 2: resolves reply 456 → gets reply 456 + text → recurse depth 3
+    // depth 3: depth >= maxDepth → [回复消息]
+    expect(result).toBe('[引用 张三 的消息: [回复 张三: [回复 张三: [回复消息]嵌套回复]嵌套回复]嵌套回复]\n');
+    // 1 call from resolveReplyContext + 2 calls from parseHistoryMessageSegments recursion
+    expect(mockClient.callApi).toHaveBeenCalledTimes(3);
   });
 
   it('should return empty string when get_msg returns no message', async () => {

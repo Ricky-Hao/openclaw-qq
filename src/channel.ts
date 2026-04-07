@@ -25,6 +25,7 @@ import {
   startAccount,
   stopAccount,
   getActiveClient,
+  getAnyActiveClient,
 } from "./gateway.js";
 import {
   buildTextSegments,
@@ -103,7 +104,7 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
     polls: false, // Disabled: use poll_create tool directly for correct agentId propagation
     reactions: true,
     edit: false,
-    unsend: false,
+    unsend: true,
     reply: true,
     effects: false,
     groupManagement: false,
@@ -372,7 +373,7 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
 
   // ── Actions Adapter ─────────────────────────────────────────────
   actions: {
-    supportsAction: ({ action }) => action === "send" || action === "react" || action === "poll",
+    supportsAction: ({ action }) => action === "send" || action === "react" || action === "poll" || action === "delete",
 
     handleAction: async (ctx: ChannelMessageActionContext) => {
       const params = ctx.params;
@@ -470,6 +471,41 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
           }],
           details: {},
         };
+      }
+
+      if (ctx.action === "delete") {
+        const messageId = params.messageId || params.message_id;
+        if (!messageId) {
+          return {
+            content: [{ type: "text", text: "messageId is required for delete action." }],
+            details: {},
+            isError: true,
+          };
+        }
+
+        const deleteAccountId = ctx.accountId || defaultAccountId(ctx.cfg);
+        const deleteClient = getActiveClient(deleteAccountId) || getAnyActiveClient();
+        if (!deleteClient) {
+          return {
+            content: [{ type: "text", text: "No active QQ connection." }],
+            details: {},
+            isError: true,
+          };
+        }
+
+        try {
+          await deleteClient.callApi("delete_msg", { message_id: Number(messageId) });
+          return {
+            content: [{ type: "text", text: JSON.stringify({ ok: true, message_id: messageId }) }],
+            details: {},
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ error: `Failed to delete message: ${err instanceof Error ? err.message : String(err)}` }) }],
+            details: {},
+            isError: true,
+          };
+        }
       }
 
       if (ctx.action !== "react") {

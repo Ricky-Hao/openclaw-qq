@@ -95,8 +95,8 @@ export async function resolveReplyContext(
 
     if (repliedMsg?.message) {
       const repliedSender = repliedMsg.sender?.card || repliedMsg.sender?.nickname || "?";
-      // Don't pass client to prevent infinite recursion on nested replies
-      const repliedContent = await parseHistoryMessageSegments(repliedMsg.message);
+      // Start at depth 1 since resolveReplyContext itself is the first layer of expansion
+      const repliedContent = await parseHistoryMessageSegments(repliedMsg.message, client, 1, 3);
       return `[引用 ${repliedSender} 的消息: ${repliedContent}]\n`;
     }
   } catch {
@@ -109,13 +109,20 @@ export async function resolveReplyContext(
  * Parse a history message's segments into a text summary.
  * Returns a string with per-image resolve hints and [文件: name] markers for non-text content.
  *
- * @param client  Optional OneBot client for resolving reply segments via get_msg.
- *                When omitted, reply segments degrade to `[回复消息]`.
+ * @param client    Optional OneBot client for resolving reply/forward segments via API.
+ *                  When omitted, reply segments degrade to `[回复消息]` and forward to `[合并转发消息]`.
+ * @param depth     Current recursion depth (default 0).
+ * @param maxDepth  Maximum recursion depth (default 3). When depth >= maxDepth,
+ *                  reply and forward segments degrade to plain text markers.
  */
 export async function parseHistoryMessageSegments(
   segs: Array<{ type: string; data: Record<string, string> }> | undefined | null,
   client?: { callApi: (action: string, params: Record<string, unknown>) => Promise<unknown> },
+  depth?: number,
+  maxDepth?: number,
 ): Promise<string> {
+  const d = depth ?? 0;
+  const md = maxDepth ?? 3;
   const textParts: string[] = [];
   const imageParts: string[] = [];
   const fileNames: string[] = [];
@@ -143,7 +150,7 @@ export async function parseHistoryMessageSegments(
       }
     } else if (seg.type === "reply") {
       const replyId = seg.data.id;
-      if (replyId && client) {
+      if (replyId && client && d < md) {
         try {
           const repliedMsg = await client.callApi("get_msg", { message_id: Number(replyId) }) as {
             sender?: { card?: string; nickname?: string };
@@ -152,8 +159,7 @@ export async function parseHistoryMessageSegments(
 
           if (repliedMsg?.message) {
             const repliedSender = repliedMsg.sender?.card || repliedMsg.sender?.nickname || "?";
-            // Recurse without client to prevent infinite recursion on nested replies
-            const repliedContent = await parseHistoryMessageSegments(repliedMsg.message, undefined);
+            const repliedContent = await parseHistoryMessageSegments(repliedMsg.message, client, d + 1, md);
             textParts.push(`[回复 ${repliedSender}: ${repliedContent}]`);
           } else {
             textParts.push("[回复消息]");
@@ -174,7 +180,39 @@ export async function parseHistoryMessageSegments(
     } else if (seg.type === "record") {
       textParts.push("[语音消息]");
     } else if (seg.type === "forward") {
-      textParts.push("[合并转发消息]");
+      const forwardId = seg.data.id;
+      if (forwardId && client && d < md) {
+        try {
+          const forwardResult = await client.callApi("get_forward_msg", {
+            message_id: forwardId,
+          }) as {
+            messages?: Array<{
+              sender?: { nickname?: string; card?: string; user_id?: number };
+              content?: Array<{ type: string; data: Record<string, string> }>;
+              // NapCat may use "message" instead of "content"
+              message?: Array<{ type: string; data: Record<string, string> }>;
+            }>;
+          } | undefined;
+
+          const msgs = forwardResult?.messages;
+          if (msgs && msgs.length > 0) {
+            const parts: string[] = [];
+            for (const msg of msgs) {
+              const sender = msg.sender?.card || msg.sender?.nickname || "?";
+              const msgSegs = msg.content || msg.message;
+              const content = await parseHistoryMessageSegments(msgSegs, client, d + 1, md);
+              parts.push(`${sender}: ${content}`);
+            }
+            textParts.push(`[合并转发消息:\n${parts.join("\n")}]`);
+          } else {
+            textParts.push("[合并转发消息]");
+          }
+        } catch {
+          textParts.push("[合并转发消息]");
+        }
+      } else {
+        textParts.push("[合并转发消息]");
+      }
     } else if (seg.type === "video") {
       textParts.push("[视频]");
     } else if (seg.type === "json") {

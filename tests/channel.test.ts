@@ -7,12 +7,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getActiveClient } from '../src/gateway.js';
+import { getActiveClient, getAnyActiveClient } from '../src/gateway.js';
 import { qqChannelPlugin } from '../src/channel.js';
 
 // Mock dependencies needed by channel.ts
 vi.mock('../src/gateway.js', () => ({
   getActiveClient: vi.fn(() => ({
+    connected: true,
+    sendMessage: vi.fn().mockResolvedValue(99999),
+    callApi: vi.fn().mockResolvedValue({}),
+  })),
+  getAnyActiveClient: vi.fn(() => ({
     connected: true,
     sendMessage: vi.fn().mockResolvedValue(99999),
     callApi: vi.fn().mockResolvedValue({}),
@@ -404,5 +409,158 @@ describe('channel.ts security.collectWarnings', () => {
   it('uses correct config path format with accounts', () => {
     const warnings = collectWarnings(makeCtx({ dmPolicy: 'open', accountId: 'test' }));
     expect(warnings[0]).toContain('channels.qq.accounts.test');
+  });
+});
+
+// ── capabilities.unsend ─────────────────────────────────────────
+
+describe('channel.ts capabilities.unsend', () => {
+  it('has unsend enabled', () => {
+    expect(qqChannelPlugin.capabilities.unsend).toBe(true);
+  });
+});
+
+// ── supportsAction includes delete ──────────────────────────────
+
+describe('channel.ts supportsAction', () => {
+  const supportsAction = qqChannelPlugin.actions!.supportsAction;
+
+  it('supports send action', () => {
+    expect(supportsAction({ action: 'send' } as any)).toBe(true);
+  });
+
+  it('supports react action', () => {
+    expect(supportsAction({ action: 'react' } as any)).toBe(true);
+  });
+
+  it('supports poll action', () => {
+    expect(supportsAction({ action: 'poll' } as any)).toBe(true);
+  });
+
+  it('supports delete action', () => {
+    expect(supportsAction({ action: 'delete' } as any)).toBe(true);
+  });
+
+  it('does not support edit action', () => {
+    expect(supportsAction({ action: 'edit' } as any)).toBe(false);
+  });
+});
+
+// ── delete action ──────────────────────────────────────────────
+
+describe('channel.ts delete action', () => {
+  const handleAction = qqChannelPlugin.actions!.handleAction;
+
+  it('returns error when messageId is missing', async () => {
+    const ctx = {
+      action: 'delete',
+      params: {},
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
+      accountId: 'default',
+    } as any;
+
+    const result = await handleAction(ctx);
+    expect((result as any).isError).toBe(true);
+    expect((result as any).content[0].text).toContain('messageId is required');
+  });
+
+  it('successfully deletes a message', async () => {
+    const mockCallApi = vi.fn().mockResolvedValue({});
+    vi.mocked(getActiveClient).mockReturnValue({
+      connected: true,
+      sendMessage: vi.fn(),
+      callApi: mockCallApi,
+    } as any);
+
+    const ctx = {
+      action: 'delete',
+      params: { messageId: '12345' },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
+      accountId: 'default',
+    } as any;
+
+    const result = await handleAction(ctx);
+    expect((result as any).isError).toBeUndefined();
+    const data = JSON.parse((result as any).content[0].text);
+    expect(data.ok).toBe(true);
+    expect(data.message_id).toBe('12345');
+    expect(mockCallApi).toHaveBeenCalledWith('delete_msg', { message_id: 12345 });
+  });
+
+  it('accepts message_id param (snake_case)', async () => {
+    const mockCallApi = vi.fn().mockResolvedValue({});
+    vi.mocked(getActiveClient).mockReturnValue({
+      connected: true,
+      sendMessage: vi.fn(),
+      callApi: mockCallApi,
+    } as any);
+
+    const ctx = {
+      action: 'delete',
+      params: { message_id: '67890' },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
+      accountId: 'default',
+    } as any;
+
+    const result = await handleAction(ctx);
+    expect((result as any).isError).toBeUndefined();
+    expect(mockCallApi).toHaveBeenCalledWith('delete_msg', { message_id: 67890 });
+  });
+
+  it('returns error when delete_msg API fails', async () => {
+    vi.mocked(getActiveClient).mockReturnValue({
+      connected: true,
+      sendMessage: vi.fn(),
+      callApi: vi.fn().mockRejectedValue(new Error('permission denied')),
+    } as any);
+
+    const ctx = {
+      action: 'delete',
+      params: { messageId: '12345' },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
+      accountId: 'default',
+    } as any;
+
+    const result = await handleAction(ctx);
+    expect((result as any).isError).toBe(true);
+    const data = JSON.parse((result as any).content[0].text);
+    expect(data.error).toContain('permission denied');
+  });
+
+  it('returns error when no client is available', async () => {
+    vi.mocked(getActiveClient).mockReturnValue(undefined as any);
+    vi.mocked(getAnyActiveClient).mockReturnValue(undefined as any);
+
+    const ctx = {
+      action: 'delete',
+      params: { messageId: '12345' },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
+      accountId: 'default',
+    } as any;
+
+    const result = await handleAction(ctx);
+    expect((result as any).isError).toBe(true);
+    expect((result as any).content[0].text).toContain('No active QQ connection');
+  });
+
+  it('falls back to getAnyActiveClient when getActiveClient returns null', async () => {
+    const mockCallApi = vi.fn().mockResolvedValue({});
+    vi.mocked(getActiveClient).mockReturnValue(undefined as any);
+    vi.mocked(getAnyActiveClient).mockReturnValue({
+      connected: true,
+      sendMessage: vi.fn(),
+      callApi: mockCallApi,
+    } as any);
+
+    const ctx = {
+      action: 'delete',
+      params: { messageId: '12345' },
+      cfg: { channels: { qq: { accounts: { default: { botQQ: '10001' } } } } },
+      accountId: 'default',
+    } as any;
+
+    const result = await handleAction(ctx);
+    expect((result as any).isError).toBeUndefined();
+    expect(mockCallApi).toHaveBeenCalledWith('delete_msg', { message_id: 12345 });
   });
 });

@@ -11,8 +11,7 @@ setup:
 
 turns:
   - role: user
-    content: >
-      在 qq:group:123456789 创建一个投票，问题是"测试投票"，选项有 A、B、C，1分钟后结算
+    content: "请直接调用 poll_create 工具，参数 target 为 'qq:group:123456789'，question 为 '测试投票'，options 为 ['A', 'B', 'C']，duration 为 '1m'"
 
 graders:
   - type: tool_calls

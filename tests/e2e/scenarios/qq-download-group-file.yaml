@@ -11,7 +11,7 @@ setup:
 
 turns:
   - role: user
-    content: "请直接调用 qq_download_group_file 工具，下载 file_id 为 abc123 的群文件"
+    content: "请直接调用 qq_download_group_file 工具，参数 file_id 为 'abc123'，filename 为 'test.txt'"
 
 graders:
   - type: tool_calls
