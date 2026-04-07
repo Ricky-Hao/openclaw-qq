@@ -850,8 +850,8 @@ describe('handleInboundMessage — InboundHistory', () => {
 
     expect(capturedCtx).not.toBeNull();
     expect(capturedCtx!.InboundHistory).toEqual([
-      { sender: '张三', body: '今天天气真好', timestamp: 1772956800000 },
-      { sender: '李四', body: '是啊', timestamp: 1772956810000 },
+      { sender: '张三', body: '[msg_id:9001] 今天天气真好', timestamp: 1772956800000 },
+      { sender: '李四', body: '[msg_id:9002] 是啊', timestamp: 1772956810000 },
     ]);
   });
 
@@ -882,7 +882,7 @@ describe('handleInboundMessage — InboundHistory', () => {
     // History should have per-image resolve hints
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
     expect(history).toHaveLength(1);
-    expect(history[0].body).toBe('这是什么？ [图片 - 使用 qq_resolve_image(file: "5E28D43A2FE346F995BC1D0F5D82829F.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg") 获取]');
+    expect(history[0].body).toBe('[msg_id:9001] 这是什么？ [图片 - 使用 qq_resolve_image(file: "5E28D43A2FE346F995BC1D0F5D82829F.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg") 获取]');
 
     // MediaPaths/MediaUrls should NOT contain history images
     // (current message "看看猫" has no images)
@@ -940,7 +940,7 @@ describe('handleInboundMessage — InboundHistory', () => {
 
     // History should have per-image resolve hint
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
-    expect(history[0].body).toBe('[图片 - 使用 qq_resolve_image(file: "HIST123.jpg") 获取]');
+    expect(history[0].body).toBe('[msg_id:9001] [图片 - 使用 qq_resolve_image(file: "HIST123.jpg") 获取]');
 
     // Cleanup temp files
     for (const p of capturedCtx!.MediaPaths as string[]) {
@@ -993,7 +993,7 @@ describe('handleInboundMessage — InboundHistory', () => {
 
     // History shows 3 images with per-image resolve hints
     const history = capturedCtx!.InboundHistory as Array<{ sender: string; body: string; timestamp: number }>;
-    expect(history[0].body).toBe('[图片 - 使用 qq_resolve_image(file: "H1.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "H2.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "H3.jpg") 获取]');
+    expect(history[0].body).toBe('[msg_id:9001] [图片 - 使用 qq_resolve_image(file: "H1.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "H2.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "H3.jpg") 获取]');
 
     // Cleanup
     for (const p of capturedCtx!.MediaPaths as string[]) {
@@ -1033,7 +1033,7 @@ describe('handleInboundMessage — InboundHistory', () => {
     // RawBody keeps the original empty extractPlainText output
     // (but since it was empty and became the placeholder, all three match)
     expect(capturedCtx!.InboundHistory).toEqual([
-      { sender: '张三', body: '有人在吗', timestamp: 1772956800000 },
+      { sender: '张三', body: '[msg_id:9001] 有人在吗', timestamp: 1772956800000 },
     ]);
   });
 

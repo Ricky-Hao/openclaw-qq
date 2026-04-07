@@ -500,8 +500,17 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
             details: {},
           };
         } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          // QQ only allows recalling messages within 2 minutes
+          if (errMsg.includes("retcode=1200") || errMsg.includes("decode failed") || errMsg.includes("recall")) {
+            return {
+              content: [{ type: "text", text: JSON.stringify({ error: "撤回失败：QQ 只允许撤回 2 分钟内的消息。该消息已超过时限，无法撤回。", message_id: messageId }) }],
+              details: {},
+              isError: true,
+            };
+          }
           return {
-            content: [{ type: "text", text: JSON.stringify({ error: `Failed to delete message: ${err instanceof Error ? err.message : String(err)}` }) }],
+            content: [{ type: "text", text: JSON.stringify({ error: `Failed to delete message: ${errMsg}`, message_id: messageId }) }],
             details: {},
             isError: true,
           };
@@ -876,6 +885,8 @@ export const qqChannelPlugin: ChannelPlugin<QQResolvedAccount> = {
       "QQ does not support Markdown formatting. Use plain text, 【brackets】 for emphasis, and numbered lists.",
       "QQ messages cannot be edited after sending.",
       "QQ image URLs expire within ~2 hours.",
+      "QQ only allows recalling (deleting) messages within 2 minutes of sending. Messages older than 2 minutes cannot be recalled.",
+      "Chat history entries are prefixed with [msg_id:xxx] — use this ID for message delete (recall) operations.",
     ],
   },
 };

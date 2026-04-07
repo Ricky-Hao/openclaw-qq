@@ -488,7 +488,9 @@ export async function handleInboundMessage(
             const timestamp = typeof m.time === "number"
               ? (m.time as number) * 1000
               : (event.time ? event.time * 1000 : Date.now());
-            return { sender, body, timestamp };
+            const messageId = typeof m.message_id === "number" ? String(m.message_id) : undefined;
+            const bodyWithId = messageId ? `[msg_id:${messageId}] ${body}` : body;
+            return { sender, body: bodyWithId, timestamp };
           }));
         }
       }
