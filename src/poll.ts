@@ -138,11 +138,7 @@ const VERIFIED_EMOJI_POOL = [
   { emoji: "🔥",        emojiId: "128293" }, // 火
   { emoji: "[表情76]",  emojiId: "76" },     // 赞
   { emoji: "[表情333]", emojiId: "333" },   // 烟花
-  { emoji: "[表情137]", emojiId: "137" },   // 鞭炮
   { emoji: "[表情53]",  emojiId: "53" },     // 蛋糕
-  { emoji: "[表情114]", emojiId: "114" },   // 篮球
-  { emoji: "[表情89]",  emojiId: "89" },     // 西瓜
-  { emoji: "[表情419]", emojiId: "419" },   //
   { emoji: "[表情307]", emojiId: "307" },   // 喵喵
   { emoji: "[表情277]", emojiId: "277" },   // 汪汪
   { emoji: "[表情201]", emojiId: "201" },   // 点赞

@@ -8,6 +8,7 @@ import type {
   OneBotApiResponse,
   OneBotEvent,
   OneBotMessageEvent,
+  OneBotNoticeEvent,
 } from "./types.js";
 
 export type OneBotClientConfig = {
@@ -23,10 +24,12 @@ type PendingCall = {
 
 export interface OneBotClient {
   on(event: "message", handler: (evt: OneBotMessageEvent) => void): this;
+  on(event: "notice", handler: (evt: OneBotNoticeEvent) => void): this;
   on(event: "connected", handler: () => void): this;
   on(event: "disconnected", handler: (reason: string) => void): this;
   on(event: "error", handler: (err: Error) => void): this;
   emit(event: "message", evt: OneBotMessageEvent): boolean;
+  emit(event: "notice", evt: OneBotNoticeEvent): boolean;
   emit(event: "connected"): boolean;
   emit(event: "disconnected", reason: string): boolean;
   emit(event: "error", err: Error): boolean;
@@ -359,6 +362,9 @@ export class OneBotClient extends EventEmitter {
     const event = obj as OneBotEvent;
     if (event.post_type === "message") {
       this.emit("message", event as OneBotMessageEvent);
+    }
+    if (event.post_type === "notice") {
+      this.emit("notice", event as OneBotNoticeEvent);
     }
     // meta_event (heartbeat/lifecycle) — just update lastEventAt (done above)
   }

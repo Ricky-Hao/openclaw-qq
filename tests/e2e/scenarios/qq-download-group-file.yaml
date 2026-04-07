@@ -1,0 +1,22 @@
+id: qq-download-group-file
+name: "下载QQ群文件"
+description: "用户请求下载群文件，验证 qq_download_group_file 被调用"
+tags:
+  - download
+  - basic
+
+setup:
+  agent_id: "test-bot"
+  clean_before: true
+
+turns:
+  - role: user
+    content: "请直接调用 qq_download_group_file 工具，下载 file_id 为 abc123 的群文件"
+
+graders:
+  - type: tool_calls
+    assertions:
+      - tool: "qq_download_group_file"
+
+cleanup:
+  clean_agent_data: true

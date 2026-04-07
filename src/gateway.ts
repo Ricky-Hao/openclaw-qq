@@ -69,12 +69,53 @@ export async function sendWithRetry(
 
 
 /**
+ * Resolve reply context from message segments.
+ * If the message contains a reply segment, fetches the referenced message via get_msg
+ * and returns a formatted context string like `[引用 张三 的消息: 你好]\n`.
+ *
+ * @param segments  The message segments to search for a reply segment.
+ * @param client    Optional OneBot client for calling get_msg.
+ *                  When omitted, returns empty string (no resolution).
+ * @returns         A formatted reply context string, or empty string if no reply.
+ */
+export async function resolveReplyContext(
+  segments: Array<{ type: string; data: Record<string, string> }>,
+  client?: { callApi: (action: string, params: Record<string, unknown>) => Promise<unknown> },
+): Promise<string> {
+  const replySegment = segments.find(seg => seg.type === "reply");
+  if (!replySegment?.data?.id || !client) return "";
+
+  try {
+    const repliedMsg = await client.callApi("get_msg", {
+      message_id: Number(replySegment.data.id),
+    }) as {
+      sender?: { card?: string; nickname?: string };
+      message?: Array<{ type: string; data: Record<string, string> }>;
+    } | undefined;
+
+    if (repliedMsg?.message) {
+      const repliedSender = repliedMsg.sender?.card || repliedMsg.sender?.nickname || "?";
+      // Don't pass client to prevent infinite recursion on nested replies
+      const repliedContent = await parseHistoryMessageSegments(repliedMsg.message);
+      return `[引用 ${repliedSender} 的消息: ${repliedContent}]\n`;
+    }
+  } catch {
+    // get_msg failed, skip reply context
+  }
+  return "";
+}
+
+/**
  * Parse a history message's segments into a text summary.
  * Returns a string with per-image resolve hints and [文件: name] markers for non-text content.
+ *
+ * @param client  Optional OneBot client for resolving reply segments via get_msg.
+ *                When omitted, reply segments degrade to `[回复消息]`.
  */
-export function parseHistoryMessageSegments(
+export async function parseHistoryMessageSegments(
   segs: Array<{ type: string; data: Record<string, string> }> | undefined | null,
-): string {
+  client?: { callApi: (action: string, params: Record<string, unknown>) => Promise<unknown> },
+): Promise<string> {
   const textParts: string[] = [];
   const imageParts: string[] = [];
   const fileNames: string[] = [];
@@ -94,7 +135,50 @@ export function parseHistoryMessageSegments(
       }
     } else if (seg.type === "file") {
       const name = seg.data.name || seg.data.file || "未知文件";
-      fileNames.push(name);
+      const fileId = seg.data.file_id;
+      if (fileId) {
+        fileNames.push(`${name} - 使用 qq_download_group_file(file_id: "${fileId}") 下载`);
+      } else {
+        fileNames.push(name);
+      }
+    } else if (seg.type === "reply") {
+      const replyId = seg.data.id;
+      if (replyId && client) {
+        try {
+          const repliedMsg = await client.callApi("get_msg", { message_id: Number(replyId) }) as {
+            sender?: { card?: string; nickname?: string };
+            message?: Array<{ type: string; data: Record<string, string> }>;
+          } | undefined;
+
+          if (repliedMsg?.message) {
+            const repliedSender = repliedMsg.sender?.card || repliedMsg.sender?.nickname || "?";
+            // Recurse without client to prevent infinite recursion on nested replies
+            const repliedContent = await parseHistoryMessageSegments(repliedMsg.message, undefined);
+            textParts.push(`[回复 ${repliedSender}: ${repliedContent}]`);
+          } else {
+            textParts.push("[回复消息]");
+          }
+        } catch {
+          textParts.push("[回复消息]");
+        }
+      } else {
+        textParts.push("[回复消息]");
+      }
+    } else if (seg.type === "at") {
+      const qq = seg.data.qq;
+      if (qq === "all") {
+        textParts.push("@全体成员");
+      } else {
+        textParts.push(`@${qq}`);
+      }
+    } else if (seg.type === "record") {
+      textParts.push("[语音消息]");
+    } else if (seg.type === "forward") {
+      textParts.push("[合并转发消息]");
+    } else if (seg.type === "video") {
+      textParts.push("[视频]");
+    } else if (seg.type === "json") {
+      textParts.push("[卡片消息]");
     }
   }
 
@@ -320,6 +404,12 @@ export async function handleInboundMessage(
     bodyForAgent = "[用户@了你但没有附带任何文字]";
   }
 
+  // ── Resolve reply context (quoted message) ───────────────────
+  const replyContext = await resolveReplyContext(event.message as Array<{ type: string; data: Record<string, string> }>, client);
+  if (replyContext) {
+    bodyForAgent = replyContext + bodyForAgent;
+  }
+
   // ── Processing indicator (emoji reaction) ────────────────────────
   // React with 🔥 to show the message is being processed
   let processingEmojiSet = false;
@@ -350,18 +440,18 @@ export async function handleInboundMessage(
           .slice(-(account.groupContextMessages)); // take last N
 
         if (contextMsgs.length > 0) {
-          inboundHistory = contextMsgs.map((m) => {
+          inboundHistory = await Promise.all(contextMsgs.map(async (m) => {
             const senderObj = m.sender as Record<string, string> | undefined | null;
             const sender = senderObj?.card
               || senderObj?.nickname
               || String(m.user_id);
             const segs = m.message as Array<{ type: string; data: Record<string, string> }>;
-            const body = parseHistoryMessageSegments(segs);
+            const body = await parseHistoryMessageSegments(segs, client);
             const timestamp = typeof m.time === "number"
               ? (m.time as number) * 1000
               : (event.time ? event.time * 1000 : Date.now());
             return { sender, body, timestamp };
-          });
+          }));
         }
       }
     } catch (err) {
@@ -629,3 +719,5 @@ async function deliverReply(
     }
   }
 }
+
+

@@ -5,6 +5,7 @@ import { basename, extname } from "node:path";
 import type { MessageSegment, MessageTarget } from "./types.js";
 
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"]);
+const AUDIO_EXTS = new Set([".wav", ".mp3", ".amr", ".silk", ".ogg", ".flac", ".m4a", ".opus"]);
 
 /** Maximum file size for local files sent as base64 (20 MB). */
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -173,13 +174,46 @@ export function buildFileSegment(pathOrUrl: string, filename?: string): MessageS
 }
 
 /**
+ * Build a voice/record message segment for QQ native voice bubbles.
+ * NapCat accepts: base64://, file://, http(s):// URLs.
+ */
+export function buildRecordSegment(pathOrUrl: string): MessageSegment {
+  // Already base64
+  if (pathOrUrl.startsWith("base64://")) {
+    return { type: "record", data: { file: pathOrUrl } };
+  }
+  // HTTP(S) URL — pass directly
+  if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+    return { type: "record", data: { file: pathOrUrl } };
+  }
+  // file:// URI
+  if (pathOrUrl.startsWith("file://")) {
+    return { type: "record", data: { file: pathOrUrl } };
+  }
+  // Local file path — convert to base64
+  if (existsSync(pathOrUrl)) {
+    const stat = statSync(pathOrUrl);
+    if (stat.size > MAX_FILE_BYTES) {
+      throw new Error(`Audio file too large: ${stat.size} bytes (max ${MAX_FILE_BYTES})`);
+    }
+    const buf = readFileSync(pathOrUrl);
+    return { type: "record", data: { file: `base64://${buf.toString("base64")}` } };
+  }
+  // Fallback: pass as-is
+  return { type: "record", data: { file: pathOrUrl } };
+}
+
+/**
  * Build the appropriate media segment based on file type.
- * Images → image segment, everything else → file segment.
+ * Images → image segment, audio → record segment, everything else → file segment.
  */
 export function buildMediaSegment(pathOrUrl: string, filename?: string): MessageSegment {
   const ext = extname(filename || pathOrUrl).toLowerCase();
   if (IMAGE_EXTS.has(ext)) {
     return buildImageSegment(pathOrUrl);
+  }
+  if (AUDIO_EXTS.has(ext)) {
+    return buildRecordSegment(pathOrUrl);
   }
   return buildFileSegment(pathOrUrl, filename);
 }

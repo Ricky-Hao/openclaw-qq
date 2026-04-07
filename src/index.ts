@@ -5,6 +5,7 @@ import { qqChannelPlugin, setPluginRuntime } from "./channel.js";
 import { createPollCreateTool, createPollResultTool } from "./poll.js";
 import { createQQResolveImageTool } from "./resolve-image.js";
 import { createQQResolveMemberTool } from "./resolve-member.js";
+import { createQQDownloadFileTool } from "./download-file.js";
 
 const plugin = {
   id: "openclaw-qq",
@@ -30,6 +31,9 @@ const plugin = {
 
     // Register qq_resolve_member tool for looking up group members by nickname
     api.registerTool(createQQResolveMemberTool, { name: "qq_resolve_member" });
+
+    // Register qq_download_group_file tool for on-demand file downloads
+    api.registerTool(createQQDownloadFileTool, { name: "qq_download_group_file" });
   },
 };
 

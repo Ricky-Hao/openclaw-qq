@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseHistoryMessageSegments,
+  resolveReplyContext,
   handleInboundMessage,
   sendWithRetry,
 } from '../src/gateway.js';
@@ -11,131 +12,442 @@ import type { QQResolvedAccount } from '../src/config.js';
 // ── parseHistoryMessageSegments ─────────────────────────────────────
 
 describe('parseHistoryMessageSegments', () => {
-  it('should extract text from text segments', () => {
+  it('should extract text from text segments', async () => {
     const segs = [
       { type: 'text', data: { text: 'Hello ' } },
       { type: 'text', data: { text: 'world!' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('Hello world!');
   });
 
-  it('should include face segments as [表情XX]', () => {
+  it('should include face segments as [表情XX]', async () => {
     const segs = [
       { type: 'text', data: { text: 'Hi ' } },
       { type: 'face', data: { id: '76' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('Hi [表情76]');
   });
 
-  it('should count images and append per-image resolve hints', () => {
+  it('should count images and append per-image resolve hints', async () => {
     const segs = [
       { type: 'text', data: { text: 'Look at this' } },
       { type: 'image', data: { file: '5E28D43A2FE346F995BC1D0F5D82829F.jpg' } },
       { type: 'image', data: { file: 'A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('Look at this [图片 - 使用 qq_resolve_image(file: "5E28D43A2FE346F995BC1D0F5D82829F.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "A7BCE4AD4BF4784F1D3A25C84D3A06EC.jpg") 获取]');
   });
 
-  it('should render resolve hint when data.file is present', () => {
+  it('should render resolve hint when data.file is present', async () => {
     const segs = [
       { type: 'image', data: { file: 'ABC123.jpg' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[图片 - 使用 qq_resolve_image(file: "ABC123.jpg") 获取]');
   });
 
-  it('should use file field for resolve hint', () => {
+  it('should use file field for resolve hint', async () => {
     const segs = [
       { type: 'image', data: { url: 'https://example.com/url.jpg', file: 'HASH123.jpg' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[图片 - 使用 qq_resolve_image(file: "HASH123.jpg") 获取]');
   });
 
-  it('should use fallback [图片] when file hash is missing', () => {
+  it('should use fallback [图片] when file hash is missing', async () => {
     const segs = [
       { type: 'image', data: {} },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[图片]');
   });
 
-  it('should append [文件: name] for file segments', () => {
+  it('should append [文件: name] with download hint for file segments with file_id', async () => {
+    const segs = [
+      { type: 'text', data: { text: 'Here is a doc' } },
+      { type: 'file', data: { name: 'report.pdf', file_id: '/acde6471-798b-4fb0-b6fb-c8aaf3a515ae' } },
+    ];
+    const result = await parseHistoryMessageSegments(segs);
+    expect(result).toBe('Here is a doc [文件: report.pdf - 使用 qq_download_group_file(file_id: "/acde6471-798b-4fb0-b6fb-c8aaf3a515ae") 下载]');
+  });
+
+  it('should append [文件: name] without download hint for file segments without file_id', async () => {
     const segs = [
       { type: 'text', data: { text: 'Here is a doc' } },
       { type: 'file', data: { name: 'report.pdf' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('Here is a doc [文件: report.pdf]');
   });
 
-  it('should use data.file for file name when data.name is missing', () => {
+  it('should use data.file for file name when data.name is missing', async () => {
+    const segs = [
+      { type: 'file', data: { file: 'document.docx', file_id: '/some-id' } },
+    ];
+    const result = await parseHistoryMessageSegments(segs);
+    expect(result).toBe('[文件: document.docx - 使用 qq_download_group_file(file_id: "/some-id") 下载]');
+  });
+
+  it('should use data.file for file name without file_id', async () => {
     const segs = [
       { type: 'file', data: { file: 'document.docx' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[文件: document.docx]');
   });
 
-  it('should use "未知文件" when file has no name or file field', () => {
+  it('should use "未知文件" when file has no name or file field', async () => {
     const segs = [
       { type: 'file', data: {} },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[文件: 未知文件]');
   });
 
-  it('should handle mixed segments: text + images + files', () => {
+  it('should render reply segment without client as fallback', async () => {
+    const segs = [
+      { type: 'reply', data: { id: '123' } },
+    ];
+    const result = await parseHistoryMessageSegments(segs);
+    expect(result).toBe('[回复消息]');
+  });
+
+  it('should resolve reply segment with text message when client is provided', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'text', data: { text: '消息内容' } }],
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'reply', data: { id: '123' } },
+    ], mockClient);
+
+    expect(result).toBe('[回复 张三: 消息内容]');
+    expect(mockClient.callApi).toHaveBeenCalledWith('get_msg', { message_id: 123 });
+  });
+
+  it('should resolve reply segment with image message when client is provided', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'image', data: { file: 'HASH.jpg' } }],
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'reply', data: { id: '123' } },
+    ], mockClient);
+
+    expect(result).toBe('[回复 张三: [图片 - 使用 qq_resolve_image(file: "HASH.jpg") 获取]]');
+  });
+
+  it('should fallback when reply get_msg fails', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockRejectedValue(new Error('boom')),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'reply', data: { id: '123' } },
+    ], mockClient);
+
+    expect(result).toBe('[回复消息]');
+  });
+
+  it('should not recursively call API for nested replies', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'reply', data: { id: '456' } }],
+      }),
+    };
+
+    const result = await parseHistoryMessageSegments([
+      { type: 'reply', data: { id: '123' } },
+    ], mockClient);
+
+    expect(result).toBe('[回复 张三: [回复消息]]');
+    expect(mockClient.callApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('should render @all for at segment with qq=all', async () => {
+    const result = await parseHistoryMessageSegments([
+      { type: 'at', data: { qq: 'all' } },
+    ]);
+    expect(result).toBe('@全体成员');
+  });
+
+  it('should render @qq for at segment with specific qq', async () => {
+    const result = await parseHistoryMessageSegments([
+      { type: 'at', data: { qq: '123456' } },
+    ]);
+    expect(result).toBe('@123456');
+  });
+
+  it('should render record segment as [语音消息]', async () => {
+    const result = await parseHistoryMessageSegments([
+      { type: 'record', data: { file: 'voice.amr' } },
+    ]);
+    expect(result).toBe('[语音消息]');
+  });
+
+  it('should render forward segment as [合并转发消息]', async () => {
+    const result = await parseHistoryMessageSegments([
+      { type: 'forward', data: { id: '1' } },
+    ]);
+    expect(result).toBe('[合并转发消息]');
+  });
+
+  it('should render video segment as [视频]', async () => {
+    const result = await parseHistoryMessageSegments([
+      { type: 'video', data: { file: 'video.mp4' } },
+    ]);
+    expect(result).toBe('[视频]');
+  });
+
+  it('should render json segment as [卡片消息]', async () => {
+    const result = await parseHistoryMessageSegments([
+      { type: 'json', data: { data: '{"app":"com.tencent"}' } },
+    ]);
+    expect(result).toBe('[卡片消息]');
+  });
+
+  it('should handle mixed segments: text + reply + image + at', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'text', data: { text: '原消息' } }],
+      }),
+    };
+
+    const segs = [
+      { type: 'text', data: { text: '你好 ' } },
+      { type: 'reply', data: { id: '123' } },
+      { type: 'image', data: { file: 'PIC123.jpg' } },
+      { type: 'at', data: { qq: '123456' } },
+    ];
+    const result = await parseHistoryMessageSegments(segs, mockClient);
+    expect(result).toBe('你好 [回复 张三: 原消息]@123456 [图片 - 使用 qq_resolve_image(file: "PIC123.jpg") 获取]');
+  });
+
+  it('should handle mixed segments: text + images + files (with file_id)', async () => {
+    const segs = [
+      { type: 'text', data: { text: 'Check these: ' } },
+      { type: 'image', data: { file: 'PIC123.jpg' } },
+      { type: 'file', data: { name: 'notes.txt', file_id: '/file-abc' } },
+      { type: 'face', data: { id: '14' } },
+    ];
+    const result = await parseHistoryMessageSegments(segs);
+    expect(result).toBe('Check these: [表情14] [图片 - 使用 qq_resolve_image(file: "PIC123.jpg") 获取] [文件: notes.txt - 使用 qq_download_group_file(file_id: "/file-abc") 下载]');
+  });
+
+  it('should handle mixed segments: text + images + files (without file_id)', async () => {
     const segs = [
       { type: 'text', data: { text: 'Check these: ' } },
       { type: 'image', data: { file: 'PIC123.jpg' } },
       { type: 'file', data: { name: 'notes.txt' } },
       { type: 'face', data: { id: '14' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('Check these: [表情14] [图片 - 使用 qq_resolve_image(file: "PIC123.jpg") 获取] [文件: notes.txt]');
   });
 
-  it('should return [非文本消息] for empty segments', () => {
-    const result = parseHistoryMessageSegments([]);
+  it('should return [非文本消息] for empty segments', async () => {
+    const result = await parseHistoryMessageSegments([]);
     expect(result).toBe('[非文本消息]');
   });
 
-  it('should return [非文本消息] for null/undefined segments', () => {
-    expect(parseHistoryMessageSegments(null)).toBe('[非文本消息]');
-    expect(parseHistoryMessageSegments(undefined)).toBe('[非文本消息]');
+  it('should return [非文本消息] for null/undefined segments', async () => {
+    await expect(parseHistoryMessageSegments(null)).resolves.toBe('[非文本消息]');
+    await expect(parseHistoryMessageSegments(undefined)).resolves.toBe('[非文本消息]');
   });
 
-  it('should return [非文本消息] for only unknown segment types', () => {
+  it('should return [非文本消息] for only unknown segment types', async () => {
     const segs = [
       { type: 'share', data: { url: 'https://example.com' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[非文本消息]');
   });
 
-  it('should handle image-only messages with per-image hints', () => {
+  it('should handle image-only messages with per-image hints', async () => {
     const segs = [
       { type: 'image', data: { file: 'A.jpg' } },
       { type: 'image', data: { file: 'B.jpg' } },
       { type: 'image', data: { file: 'C.jpg' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[图片 - 使用 qq_resolve_image(file: "A.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "B.jpg") 获取] [图片 - 使用 qq_resolve_image(file: "C.jpg") 获取]');
   });
 
-  it('should handle multiple files', () => {
+  it('should handle multiple files with file_id', async () => {
+    const segs = [
+      { type: 'file', data: { name: 'a.pdf', file_id: '/id-a' } },
+      { type: 'file', data: { name: 'b.doc', file_id: '/id-b' } },
+    ];
+    const result = await parseHistoryMessageSegments(segs);
+    expect(result).toBe('[文件: a.pdf - 使用 qq_download_group_file(file_id: "/id-a") 下载] [文件: b.doc - 使用 qq_download_group_file(file_id: "/id-b") 下载]');
+  });
+
+  it('should handle multiple files without file_id', async () => {
     const segs = [
       { type: 'file', data: { name: 'a.pdf' } },
       { type: 'file', data: { name: 'b.doc' } },
     ];
-    const result = parseHistoryMessageSegments(segs);
+    const result = await parseHistoryMessageSegments(segs);
     expect(result).toBe('[文件: a.pdf] [文件: b.doc]');
   });
+
+  it('should handle mixed files: some with file_id, some without', async () => {
+    const segs = [
+      { type: 'file', data: { name: 'a.pdf', file_id: '/id-a' } },
+      { type: 'file', data: { name: 'b.doc' } },
+    ];
+    const result = await parseHistoryMessageSegments(segs);
+    expect(result).toBe('[文件: a.pdf - 使用 qq_download_group_file(file_id: "/id-a") 下载] [文件: b.doc]');
+  });
 });
+
+// ── resolveReplyContext ──────────────────────────────────────────────
+
+describe('resolveReplyContext', () => {
+  it('should return empty string when no reply segment exists', async () => {
+    const segments = [
+      { type: 'text', data: { text: 'hello' } },
+      { type: 'image', data: { file: 'pic.jpg' } },
+    ];
+    const mockClient = { callApi: vi.fn() };
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('');
+    expect(mockClient.callApi).not.toHaveBeenCalled();
+  });
+
+  it('should return empty string when reply segment has no id', async () => {
+    const segments = [
+      { type: 'reply', data: {} },
+    ];
+    const mockClient = { callApi: vi.fn() };
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('');
+    expect(mockClient.callApi).not.toHaveBeenCalled();
+  });
+
+  it('should return empty string when no client is provided', async () => {
+    const segments = [
+      { type: 'reply', data: { id: '123' } },
+    ];
+    const result = await resolveReplyContext(segments);
+    expect(result).toBe('');
+  });
+
+  it('should resolve reply with text message', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'text', data: { text: '你好' } }],
+      }),
+    };
+    const segments = [
+      { type: 'reply', data: { id: '123' } },
+      { type: 'text', data: { text: '回复你' } },
+    ];
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('[引用 张三 的消息: 你好]\n');
+    expect(mockClient.callApi).toHaveBeenCalledWith('get_msg', { message_id: 123 });
+  });
+
+  it('should resolve reply with image message', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'image', data: { file: 'HASH.jpg' } }],
+      }),
+    };
+    const segments = [{ type: 'reply', data: { id: '456' } }];
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('[引用 张三 的消息: [图片 - 使用 qq_resolve_image(file: "HASH.jpg") 获取]]\n');
+  });
+
+  it('should resolve reply with file message (with file_id)', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [{ type: 'file', data: { name: 'report.pdf', file_id: '/acde6471' } }],
+      }),
+    };
+    const segments = [{ type: 'reply', data: { id: '789' } }];
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('[引用 张三 的消息: [文件: report.pdf - 使用 qq_download_group_file(file_id: "/acde6471") 下载]]\n');
+  });
+
+  it('should return empty string when get_msg fails', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockRejectedValue(new Error('API error')),
+    };
+    const segments = [{ type: 'reply', data: { id: '123' } }];
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('');
+  });
+
+  it('should use nickname when card is empty', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '', nickname: 'NickName' },
+        message: [{ type: 'text', data: { text: 'hi' } }],
+      }),
+    };
+    const segments = [{ type: 'reply', data: { id: '123' } }];
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('[引用 NickName 的消息: hi]\n');
+  });
+
+  it('should use "?" when both card and nickname are missing', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: {},
+        message: [{ type: 'text', data: { text: 'hi' } }],
+      }),
+    };
+    const segments = [{ type: 'reply', data: { id: '123' } }];
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('[引用 ? 的消息: hi]\n');
+  });
+
+  it('should not recursively resolve nested replies in quoted message', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三', nickname: 'zhangsan' },
+        message: [
+          { type: 'reply', data: { id: '456' } },
+          { type: 'text', data: { text: '嵌套回复' } },
+        ],
+      }),
+    };
+    const segments = [{ type: 'reply', data: { id: '123' } }];
+    const result = await resolveReplyContext(segments, mockClient);
+    // The nested reply should degrade to [回复消息] since parseHistoryMessageSegments
+    // is called without client
+    expect(result).toBe('[引用 张三 的消息: [回复消息]嵌套回复]\n');
+    // Only one API call (for the outer reply, not the nested one)
+    expect(mockClient.callApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('should return empty string when get_msg returns no message', async () => {
+    const mockClient = {
+      callApi: vi.fn().mockResolvedValue({
+        sender: { card: '张三' },
+        // no message field
+      }),
+    };
+    const segments = [{ type: 'reply', data: { id: '123' } }];
+    const result = await resolveReplyContext(segments, mockClient);
+    expect(result).toBe('');
+  });
+});
+
 // ── handleInboundMessage — InboundHistory integration ───────────────
 
 describe('handleInboundMessage — InboundHistory', () => {
@@ -1208,5 +1520,78 @@ describe('handleInboundMessage — Batch 2', () => {
     expect(sendCalls[0].segments[0].type).toBe('reply');
     // Second chunk does NOT have reply
     expect(sendCalls[1].segments.every((s: any) => s.type !== 'reply')).toBe(true);
+  });
+
+  it('should prepend reply context to Body and BodyForAgent while keeping RawBody unchanged', async () => {
+    let capturedCtx: Record<string, unknown> | null = null;
+    const runtime = makeRuntime();
+    runtime.channel.reply.finalizeInboundContext = vi.fn().mockImplementation((ctx: Record<string, unknown>) => {
+      capturedCtx = ctx;
+      return ctx;
+    });
+
+    const client = {
+      callApi: vi.fn().mockImplementation((action: string, params: any) => {
+        if (action === 'get_msg' && params.message_id === 123) {
+          return Promise.resolve({
+            sender: { card: 'TestUser', nickname: 'testuser' },
+            message: [{ type: 'image', data: { file: 'E0A6.jpg' } }],
+          });
+        }
+        return Promise.resolve({});
+      }),
+      sendMessage: vi.fn().mockResolvedValue(0),
+    } as any;
+
+    const event = makeGroupEvent({
+      message: [
+        { type: 'reply', data: { id: '123' } },
+        { type: 'at', data: { qq: '100001' } },
+        { type: 'text', data: { text: ' 这张图说了什么？' } },
+      ],
+    });
+
+    await handleInboundMessage(event, makeAccount(), cfg, runtime, client, log);
+
+    expect(capturedCtx).not.toBeNull();
+    expect(capturedCtx!.Body).toBe('[引用 TestUser 的消息: [图片 - 使用 qq_resolve_image(file: "E0A6.jpg") 获取]]\n这张图说了什么？');
+    expect(capturedCtx!.BodyForAgent).toBe('[引用 TestUser 的消息: [图片 - 使用 qq_resolve_image(file: "E0A6.jpg") 获取]]\n这张图说了什么？');
+    expect(capturedCtx!.RawBody).toBe('这张图说了什么？');
+    expect(capturedCtx!.CommandBody).toBe('[引用 TestUser 的消息: [图片 - 使用 qq_resolve_image(file: "E0A6.jpg") 获取]]\n这张图说了什么？');
+    expect(client.callApi).toHaveBeenCalledWith('get_msg', { message_id: 123 });
+  });
+
+  it('should keep Body unchanged when current reply context resolution fails', async () => {
+    let capturedCtx: Record<string, unknown> | null = null;
+    const runtime = makeRuntime();
+    runtime.channel.reply.finalizeInboundContext = vi.fn().mockImplementation((ctx: Record<string, unknown>) => {
+      capturedCtx = ctx;
+      return ctx;
+    });
+
+    const client = {
+      callApi: vi.fn().mockImplementation((action: string, params: any) => {
+        if (action === 'get_msg' && params.message_id === 123) {
+          return Promise.reject(new Error('boom'));
+        }
+        return Promise.resolve({});
+      }),
+      sendMessage: vi.fn().mockResolvedValue(0),
+    } as any;
+
+    const event = makeGroupEvent({
+      message: [
+        { type: 'reply', data: { id: '123' } },
+        { type: 'at', data: { qq: '100001' } },
+        { type: 'text', data: { text: ' 这张图说了什么？' } },
+      ],
+    });
+
+    await handleInboundMessage(event, makeAccount(), cfg, runtime, client, log);
+
+    expect(capturedCtx).not.toBeNull();
+    expect(capturedCtx!.Body).toBe('这张图说了什么？');
+    expect(capturedCtx!.BodyForAgent).toBe('这张图说了什么？');
+    expect(capturedCtx!.RawBody).toBe('这张图说了什么？');
   });
 });

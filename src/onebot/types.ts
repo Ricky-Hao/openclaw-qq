@@ -14,6 +14,10 @@ export type FileSegment = {
   type: "file";
   data: { file?: string; name?: string; url?: string; size?: string };
 };
+export type RecordSegment = {
+  type: "record";
+  data: { file: string };
+};
 
 export type MessageSegment =
   | TextSegment
@@ -22,6 +26,7 @@ export type MessageSegment =
   | ImageSegment
   | ReplySegment
   | FileSegment
+  | RecordSegment
   | { type: string; data: Record<string, string> };
 
 // ── Sender ──────────────────────────────────────────────────────────
@@ -65,11 +70,24 @@ export type OneBotMetaEvent = {
   interval?: number;
 };
 
-export type OneBotNoticeEvent = {
+export type GroupUploadNoticeEvent = {
   post_type: "notice";
-  notice_type: string;
-  [key: string]: unknown;
+  notice_type: "group_upload";
+  time: number;
+  self_id: number;
+  group_id: number;
+  user_id: number;
+  file: {
+    id: string;
+    name: string;
+    size: number;
+    busid: number;
+  };
 };
+
+export type OneBotNoticeEvent =
+  | GroupUploadNoticeEvent
+  | { post_type: "notice"; notice_type: string; [key: string]: unknown };
 
 export type OneBotEvent =
   | OneBotMessageEvent
